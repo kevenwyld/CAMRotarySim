@@ -8,6 +8,8 @@ and checks the result against the Job's model. Its stock model is a rotary
 height field, so rotary (4th-axis) milling can be added later without a
 redesign.
 
+It can also simulate multi-axis rotary milling operations.
+
 It is a standalone simulator. CAM's new simulator (C++/OpenGL, `CAMSimulator`)
 can't be extended from an addon:
 
@@ -17,6 +19,10 @@ can't be extended from an addon:
 
 The UI follows its conventions: Job combo, operation list with "follows
 visibility", play/pause, single step, speed steps 1/5/10/25/50, reset.
+
+https://github.com/user-attachments/assets/ad96ca03-bc3d-4b20-8266-5192bdd13e37
+
+https://github.com/user-attachments/assets/3a9bca94-52dd-4211-a65e-e46daf2ec9d1
 
 ## Install
 
