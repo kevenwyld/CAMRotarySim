@@ -220,7 +220,8 @@ class TestHeadlessGui(unittest.TestCase):
                          ["Checked"] * 3)
         p.spin_grid.setValue(1.0)          # coarse, for speed
         p.change_speed(-10)
-        p.change_speed(1)                  # x5: rotary moves at 15 degrees per tick
+        p.change_speed(2)                  # x5: rotary moves at 15 degrees per tick
+        self.assertEqual(p.lbl_speed.text(), "x5")
         p.on_play()
         self.assertTrue(p.milling)
         self.assertIsNotNone(p.sim, p.report.toPlainText())

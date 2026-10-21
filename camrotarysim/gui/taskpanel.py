@@ -23,7 +23,7 @@ from ..core.simulation import Simulation
 from .view import SimScene, outline_prism
 
 PREFS = "User parameter:BaseApp/Preferences/Mod/CAMRotarySim"
-SPEEDS = (1, 5, 10, 25, 50)          # same steps as the CAM simulator's speed control
+SPEEDS = (1, 2, 5, 10, 25, 50)       # the CAM simulator's speed steps (GuiDisplay.cpp)
 SAMPLES_PER_TICK = 20                # at speed 1
 ROTARY_DEG_PER_TICK = 3              # at speed 1: rotary moves are animated
 TICK_MS = 40
@@ -65,7 +65,7 @@ class TaskPanel:
         self.milling = False
         self.part_phi = None
         self.op_info = []
-        self.speed_index = min(self.prefs.GetInt("SpeedIndex", 1), len(SPEEDS) - 1)
+        self.speed_index = min(self.prefs.GetInt("SpeedIndex", SPEEDS.index(5)), len(SPEEDS) - 1)
         self.timer = QtCore.QTimer()
         self.timer.setInterval(TICK_MS)
         self.timer.timeout.connect(self.on_tick)
