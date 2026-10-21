@@ -10,6 +10,12 @@ It mirrors PathTurnBase/PathTurnPartoff: stock silhouette and part outline
 on the -X side (LibLathe's internal frame), chain_profile() taken from CAM
 Lathe Turning's source, Isoshape parameters as the tool.
 
+This targets LibLathe as it was when the fixtures were made (5b255d8):
+its PartoffOP then plunged an ISO insert at FinalDepth - EdgeLength. Since
+c2d601b LibLathe parts with a grooving or parting insert (groove_width,
+corner_radius, cutting_depth, overtravel), so with a newer LibLathe this
+tool stops and says so; the stored fixtures are the older behaviour.
+
 Usage:
   make_partoff_guess.py LIBLATHE_DIR CAMLATHETURNING_DIR [--final-depth Z] > TurnPartoff.nc
 """
@@ -94,6 +100,9 @@ def main():
     r, zmin, zmax = stock["radius"], stock["z_min"], stock["z_max"]
     final = zmin if a.final_depth is None else a.final_depth
     op = PartoffOP()
+    if hasattr(op, "groove_width"):
+        sys.exit("this LibLathe parts with a grooving insert (PartoffOP.groove_width): the Partoff guess "
+                 "fixtures follow the older ISO-insert Partoff (LibLathe 5b255d8); see the docstring")
     op.set_params({"min_dia": 0.0, "extra_dia": 0.0, "start_offset": 0.0, "end_offset": zmin - final,
                    "allow_grooving": False, "step_over": 1.0, "finish_passes": 1, "stock_to_leave": 0.0,
                    "hfeed": 5.0, "vfeed": 5.0, "clearance": a.clearance})
