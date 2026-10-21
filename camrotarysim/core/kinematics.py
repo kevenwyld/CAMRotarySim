@@ -4,7 +4,8 @@ Kinematics: how a machine position removes material from a RotaryStock.
 
 A kinematics object maps one sampled machine position (X Y Z A B C) and a
 tool to a change of the stock height field, and reports contact metrics.
-Turning is implemented. Rotary milling is a designed extension point.
+This module is turning (and drilling, boring, threading on a lathe);
+milling, indexed or rotary, is milling.MillingKinematics.
 """
 
 import math
@@ -140,49 +141,3 @@ class TurningKinematics:
         if removed > 0.0:
             np.minimum(row, low, out=row)
         return removed
-
-
-class RotaryMillingKinematics:
-    """
-    Extension point for rotary (4th-axis) milling, not implemented yet.
-
-    Design:
-    - the rotary word (A, B or C) gives the workpiece angle theta about
-      `axis` (a RotaryAxis, e.g. from the Job's machine file);
-    - to_workpiece() rotates the tool position (and tool axis) by -theta
-      about that axis, giving the cutter in the workpiece frame;
-    - apply() then lowers R(theta, s) only inside the cutter footprint at
-      that angle (stock.lower_at_angles), using a RotaryStock with
-      n_theta > 1 and a milling cutter profile (radius vs height).
-    Indexed moves (rotary word changes alone, no cutting) and continuous
-    moves (rotary and linear words together) both go through the same
-    sampling, since Move.sample() interpolates the rotary words too.
-    """
-
-    name = "rotary-milling"
-
-    AXIS_INDEX = {"A": 3, "B": 4, "C": 5}
-
-    def __init__(self, letter, axis):
-        if letter not in self.AXIS_INDEX:
-            raise ValueError("rotary axis letter must be A, B or C")
-        self.letter = letter
-        self.index = self.AXIS_INDEX[letter]
-        self.axis = axis
-
-    def to_workpiece(self, pos, tool_axis=(0.0, 0.0, 1.0)):
-        """Tool point and tool axis in the workpiece frame (rotated by -theta)."""
-        theta = -math.radians(pos[self.index])
-        k = np.asarray(self.axis.direction)
-        o = np.asarray(self.axis.origin)
-
-        def rot(v):
-            v = np.asarray(v, dtype=float)
-            return (v * math.cos(theta) + np.cross(k, v) * math.sin(theta)
-                    + k * np.dot(k, v) * (1 - math.cos(theta)))
-
-        p = rot(np.asarray(pos[:3], dtype=float) - o) + o
-        return p, rot(tool_axis)
-
-    def apply(self, stock, tool, pos, max_radius=math.inf):
-        raise NotImplementedError("rotary milling removal is planned for a later phase")

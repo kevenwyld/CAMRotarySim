@@ -9,8 +9,9 @@ R <= Rin is empty (cut through, or faced away).
 
 - Turning lowers R for every theta (the workpiece spins), so an
   axisymmetric stock uses n_theta = 1.
-- Rotary milling (later phase) lowers R only inside the cutter footprint
-  at one angle; that needs n_theta > 1. See kinematics.RotaryMillingKinematics.
+- Threading lowers R at one angle at a time (n_theta > 1).
+Milling doesn't use this model: a pocket's walls aren't radial, so it
+cuts a distance grid instead (milling.VoxelStock).
 """
 
 import math
