@@ -2,20 +2,25 @@
 
 | :warning: WARNING: This code is AI generated, use extreme caution.  Meant as a proof of concept only. |
 
-A proof-of-concept FreeCAD addon that simulates material removal for the
-turning operations of the [TurningAddon](https://github.com/kevenwyld/TurningAddon)
-and checks the result against the Job's model. Its stock model is a rotary
-height field, so rotary (4th-axis) milling can also be simulated.
+A proof-of-concept FreeCAD addon that simulates material removal and checks
+the result against the Job's model. It covers:
+- turning, drilling, boring and threading ops of the
+  [TurningAddon](https://github.com/kevenwyld/TurningAddon), on a rotary height
+  field (a radius per angle and axial position);
+- CAM milling ops, indexed or rotary (4th axis), on a signed-distance grid.
 
 It is a standalone simulator. CAM's new simulator (C++/OpenGL, `CAMSimulator`)
 can't be extended from an addon:
 
-- It parses only `G T X Y Z I J K R`, so G18 arcs and A/B/C words are lost.
+- It parses only the words `G T X Y Z I J K R`. It ignores plane selection
+  (G17/G18/G19) and takes any arc with an I or J offset as an XY arc, so G18
+  arcs are wrong. A/B/C words are dropped, and G33 runs as a plain linear move.
 - Its tools must be solids of revolution about their own axis.
 - It removes material in image space, so no geometry is left to measure.
 
 The UI follows its conventions: Job combo, operation list with "follows
-visibility", play/pause, single step, speed steps 1/5/10/25/50, reset.
+visibility", play/pause, single step, a slider, speed steps 1/2/5/10/25/50.
+It adds a reset.
 
 https://github.com/user-attachments/assets/ad96ca03-bc3d-4b20-8266-5192bdd13e37
 
@@ -33,9 +38,9 @@ toolbar. Minimum FreeCAD 1.1. Requires numpy, which CAM already uses.
 
 ## Use
 
-1. Open a Job with turning operations and start the command.
-2. Pick the Job. Turning ops are pre-checked; milling ops are listed but not
-   simulated yet.
+1. Open a Job with turning or milling operations and start the command.
+2. Pick the Job. Turning and milling ops are pre-checked. Turning and milling
+   ops can't be simulated together yet, so select one kind.
 3. Press play. The stock is drawn in the 3D view and the Job's stock and model
    are hidden while the panel is open (untick the option to keep them).
 4. Controls:
@@ -50,15 +55,16 @@ toolbar. Minimum FreeCAD 1.1. Requires numpy, which CAM already uses.
    | Blue | untouched stock |
    | Green | cut surface |
    | Red | gouge (below the part by more than the gouge tolerance) |
-   | Amber | uncut material the tool could have reached |
-   | Purple | uncut material this insert can't reach |
+   | Amber | uncut material the tool could have reached (milling: any material left beyond the part) |
+   | Purple | uncut material this insert can't reach (turning only) |
 
 6. Threads (G33 passes, e.g. the TurningAddon's Turn Thread) are cut along
    their helix. While a pass runs, the displayed workpiece turns with the
    spindle, so the tool sits in its groove. In the thread's Z range the gouge
    check is replaced by a thread measurement. Its colour is green if the pitch
    diameter is in the op's range, amber if the thread is not cut deep enough,
-   and red if it is cut too deep. Two settings control threads:
+   and red if it is cut too deep; it is light blue until measured, when
+   playback pauses or ends. Two settings control threads:
    - **Thread angles:** the angular resolution of thread zones.
    - **Forward spindle cuts:** the hand a Forward spindle cuts when feeding
      toward −Z. Path commands don't fix the hand; Reverse cuts the other one.
@@ -76,7 +82,8 @@ toolbar. Minimum FreeCAD 1.1. Requires numpy, which CAM already uses.
    and checked like the outside.
 8. The report lists the worst values, the ranges, the bore, threads, events
    and path diagnostics:
-   - **Events:** rapid moves that cut, holder collisions, parting.
+   - **Events:** rapid moves that cut, holder collisions, parting, and (milling)
+     a rotary index that sweeps the stock into the tool.
    - **Path diagnostics:** arc radius mismatches, zero feed rates,
      unsupported commands.
 
@@ -130,12 +137,15 @@ aren't radial.
 shapes are treated as flat, and the report says so. The cutting length is
 CuttingEdgeHeight.
 
+**Display.** "Part outline" shows the model as a see-through mesh.
+
 ## Inputs and conventions
 
 These were verified against source and the sample Job, not assumed:
 
-- **Commands:** the ops' `Path.Commands`, through `getPathWithPlacement`, as
-  CAM's simulator reads them. X is a radius. G2/G3 follow the plane
+- **Commands (turning):** the ops' `Path.Commands`, through
+  `getPathWithPlacement`, as CAM's simulator reads them. X is a radius.
+  Milling ops use their own local commands instead (see Milling). G2/G3 follow the plane
   selection; G18 is the ZX plane, CW/CCW as seen from +Y (Z right, X up).
   IJK are relative to the start point.
 - **Imaginary tip:** paths are programmed to the insert's imaginary tip. The
@@ -149,9 +159,14 @@ These were verified against source and the sample Job, not assumed:
   - **Threading, Grooving, Full radius:** the shape origin. For threading that
     is the V's sharp point, a tip radius below the tip arc's bottom.
 
-  If there is no usable shape, the outline is built from the Threading or
-  Isoshape parameters. Isoshape follows the conventions of `isoshape.fcstd`:
-  - The shape origin is the sharp corner of the active tip.
+  The Isoshape rule finds the imaginary tip wherever the shape's origin is:
+  the TurningAddon's current `isoshape.fcstd` puts it at the imaginary tip,
+  while older documents keep shapes with it at the sharp corner.
+
+  If there is no usable shape, the outline is built from the Threading,
+  Isoshape or Drill parameters. The Isoshape outline follows the sketch of
+  `isoshape.fcstd`:
+  - The sharp corner of the active tip is the corner the edges leave from.
   - Edges run at Rotation ± TipAngle/2, measured from +Z toward +X.
   - The insert is a rhombus with side EdgeLength between sharp corners, every
     corner rounded by TipRadius.
@@ -168,9 +183,11 @@ These were verified against source and the sample Job, not assumed:
   - R is sticky, and Z and Q within a series.
   - The same moves written out as G0/G1 work as any other path.
 - **Internal ops:** whether an op cuts inside is the op's own answer:
-  - TurningAddon proxies' `is_internal()` (Rough and Profile with
-    `Side = Internal`);
-  - Turn Thread's `internal()`, which follows the selected face;
+  - drilling ops (Turn Drill, or any op with a CAM drill) always do;
+  - Turn Thread's `internal()`, which follows the selected face, is asked
+    first, then `is_internal()` (Rough and Profile with `Side = Internal`).
+    Every TurningAddon op inherits an `is_internal()` that is False without a
+    Side, so either saying so counts;
   - otherwise the `Side` or `ThreadType` property.
 
   LibLathe bores by turning in a mirror (r → R − r), so its paths go to the
@@ -194,32 +211,37 @@ These were verified against source and the sample Job, not assumed:
   - If the groove is narrower (or wider) than the ridge even at the crests
     (roots), the pitch diameter lies outside the material and is extrapolated
     along the straight flanks.
-- **Stock and part:** the profile of the Job's stock solid and of its model,
+- **Stock and part (turning):** the profile of the Job's stock solid and of its model,
   sectioned at Y = 0. Parts are assumed to be solids of revolution about Z. The
   report shows the part's X offset from the axis if it is more than 1 µm.
 
 ## Design
 
     camrotarysim/core/      pure Python + numpy, no FreeCAD imports
-      motion.py             Path commands -> moves (G0/G1/G2/G3, G17/18/19, A/B/C carried)
-      tool.py               insert outline, lower/upper envelopes
-      stock.py              RotaryStock: R(theta, s) about a RotaryAxis; machine-file axes
-      kinematics.py         TurningKinematics; RotaryMillingKinematics (extension point)
-      simulation.py         sampling, playback, seek (per-move snapshots), events
-      compare.py            part profile, reachable profile, gouge/uncut classification
-      mesh.py               revolved mesh with per-vertex colours
-      report.py             text report
+      motion.py             Path commands -> moves (G0/G1/G2/G3, G33, canned drilling
+                            cycles, G17/18/19, A/B/C carried)
+      tool.py               turning insert, threading insert and drill outlines, envelopes
+      stock.py              RotaryStock: R and bore Rin per (theta, s); machine-file axes
+      kinematics.py         TurningKinematics (outside, bore, one angle for G33)
+      simulation.py         sampling, playback, seek (thinned snapshots), events
+      compare.py            part and bore profiles, reachable profiles, classification
+      thread_check.py       thread zones and measurement against the op
+      mesh.py               revolved mesh with bores and per-vertex colours
+      report.py             text report (turning)
+      milling.py            VoxelStock (distance grid), cutters, MillingKinematics,
+                            rotary angles, part check, report (milling)
+      surface.py            surface nets, trilinear sampling, mesh -> distance grid
+      indexing.py           retract and rotary index moves between work planes
     camrotarysim/freecad_adapter.py   Job -> core inputs
     camrotarysim/gui/       command + workbench manipulator, task panel, Coin3D scene
 
 - **Turning removal:** each move is sampled at the resolution. At each sample
   the stock is lowered, at every angle, to the insert's lower envelope in every
   axial column it covers.
-- **Rotary milling (planned):**
-  - Rotate the tool into the workpiece frame by −θ (`to_workpiece`, implemented
-    and tested).
-  - Lower R only inside the cutter footprint at that angle, with `n_theta > 1`.
-  - Rotary axes can come from the Job's machine file (`rotary_axes_from_machine`).
+- **Milling removal:** each move is sampled (every 0.25 mm, or half the grid
+  if finer). At each sample the cutter, placed in the workpiece frame by the
+  op's frame and any rotary word, is subtracted from the grid:
+  phi = min(phi, distance outside the cutter).
 - **Reachable profile:** a 1D morphological opening of the part by the insert's
   lower envelope. It is the best result the insert can produce from outside.
   Material left above it is "unreachable"; anything else left is the path's
@@ -233,8 +255,8 @@ These were verified against source and the sample Job, not assumed:
   move crosses: above its top, or inside its bottom for an internal tool, as
   when boring from solid. A radial plunge clears its own kerf, so plunging
   deeper than the insert height is not reported.
-- **Stock shape:** an outside and a bore per angle and position, so no
-  undercut pockets in a wall. The axis must be Z.
+- **Stock shape (turning):** an outside and a bore per angle and position, so
+  no undercut pockets in a wall. The axis must be Z.
 - **Drilling:** canned cycles G85 to G89 (boring, tapping) are reported, not
   simulated; so are cycles in G91. A drill is taken off-axis only as far as the
   path moves it (lathe drilling is at X 0).
@@ -250,8 +272,11 @@ These were verified against source and the sample Job, not assumed:
   - Cutters other than flat and ball are approximated.
   - Continuous rotary moves (rotary words while cutting) are supported but
     haven't been tested on a real op.
-- **Accuracy:** depends on the resolution (column spacing and sample step,
-  default 0.05 mm).
+- **Accuracy:**
+  - Turning depends on the Resolution setting (column spacing and sample
+    step, default 0.05 mm).
+  - Milling depends on the Milling grid (default 0.5 mm). Faces are accurate
+    well below the grid; drawn edges are chamfered by up to a third of it.
 - **Parting:** reported when a column reaches the axis with substantial
   material on both sides (both pieces over 1 mm radius). The parted piece is
   kept for display and comparison.
