@@ -5,8 +5,7 @@
 A proof-of-concept FreeCAD addon that simulates material removal for the
 turning operations of the [TurningAddon](https://github.com/kevenwyld/TurningAddon)
 and checks the result against the Job's model. Its stock model is a rotary
-height field, so rotary (4th-axis) milling can be added later without a
-redesign.
+height field, so rotary (4th-axis) milling can also be simulated.
 
 It is a standalone simulator. CAM's new simulator (C++/OpenGL, `CAMSimulator`)
 can't be extended from an addon:
