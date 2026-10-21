@@ -95,6 +95,7 @@ class ToolOutline:
         if nose_centre is not None:
             self.nose_centre = (nose_centre[0] - control[0], nose_centre[1] - control[1])
         self.source = source
+        self.internal = False
         self._build_envelope(envelope_step)
 
     # ------------------------------------------------------------------ build
@@ -196,6 +197,25 @@ class ToolOutline:
             nose = None
         pts += [(x_flank_top, -w2), (top, -w2), (top, w2), (x_flank_top, w2)]
         return cls(pts, (0.0, 0.0), nose, r, "Threading parameters")
+
+    def mirrored(self):
+        """
+        The outline mirrored in X about the control point: an external tool
+        used inside (boring, internal threading), with its body toward the
+        axis. The TurningAddon bores by mirroring external turning, so the
+        same insert's reference point mirrors with it.
+        """
+        m = ToolOutline.__new__(ToolOutline)
+        m.points = self.points * np.array([-1.0, 1.0])
+        if _polygon_area(m.points) < 0:
+            m.points = m.points[::-1]
+        m.control_in_shape = self.control_in_shape
+        m.nose_radius = self.nose_radius
+        m.nose_centre = None if self.nose_centre is None else (-self.nose_centre[0], self.nose_centre[1])
+        m.source = self.source + ", mirrored for internal use"
+        m.internal = not getattr(self, "internal", False)
+        m._build_envelope(self._env_z[1] - self._env_z[0] if len(self._env_z) > 1 else 0.005)
+        return m
 
     # --------------------------------------------------------------- envelope
     def _build_envelope(self, step):

@@ -57,8 +57,19 @@ toolbar. Minimum FreeCAD 1.1. Requires numpy, which CAM already uses.
    - **Thread angles:** the angular resolution of thread zones.
    - **Forward spindle cuts:** the hand a Forward spindle cuts when feeding
      toward −Z. Path commands don't fix the hand; Reverse cuts the other one.
-7. The report lists the worst values, the ranges, threads, events and path
-   diagnostics:
+7. Internal ops are simulated inside: boring (Rough and Profile with
+   Side = Internal) and internal threads. Until drilling is simulated, set the
+   hole they start from with **Starting hole**:
+   - **Auto:** the smallest Min Diameter set on an internal op, from the
+     stock's front down the model's bore, or through the stock if the bore
+     runs out at the back.
+   - **None.**
+   - **Custom:** a diameter and a depth from the stock's front.
+
+   A stock that already has a bore (a tube, say) keeps it. The bore is drawn
+   and checked like the outside.
+8. The report lists the worst values, the ranges, the bore, threads, events
+   and path diagnostics:
    - **Events:** rapid moves that cut, holder collisions, parting.
    - **Path diagnostics:** arc radius mismatches, zero feed rates,
      unsupported commands.
@@ -90,6 +101,16 @@ These were verified against source and the sample Job, not assumed:
     corner rounded by TipRadius.
   These agree with LibLathe's `get_tool_cutting_angle()`. Both sources give
   the same outline for the sample tool; see `devtools/run_sample_job.py`.
+- **Internal ops:** whether an op cuts inside is the op's own answer:
+  - TurningAddon proxies' `is_internal()` (Rough and Profile with
+    `Side = Internal`);
+  - Turn Thread's `internal()`, which follows the selected face;
+  - otherwise the `Side` or `ThreadType` property.
+
+  LibLathe bores by turning in a mirror (r → R − r), so its paths go to the
+  mirrored imaginary tip, the nose's outermost point. The simulator mirrors
+  the outline the same way and draws the tool mirrored. An internal tool
+  widens the bore to the top of its outline.
 - **Threads (G33):** per LinuxCNC's G-code reference, every pass waits for the
   spindle index, then moves K per revolution along its drive line, starting D
   degrees past the index. The tool stays at world angle 0, so it passes
@@ -100,9 +121,13 @@ These were verified against source and the sample Job, not assumed:
     - minor diameter: the roots;
     - pitch diameter: where groove and ridge are equally wide, i.e. the median
       radius.
-  - These are compared with the pitch and major diameter ranges in the Turn
-    Thread op's ThreadReport, and the deepest pass with its ThreadDiameter and
-    ThreadDepth.
+  - These are compared with the pitch, major or minor diameter ranges in the
+    Turn Thread op's ThreadReport, and the deepest pass with its
+    ThreadDiameter and ThreadDepth.
+  - Internal threads are measured on the bore, where crests and roots swap.
+  - If the groove is narrower (or wider) than the ridge even at the crests
+    (roots), the pitch diameter lies outside the material and is extrapolated
+    along the straight flanks.
 - **Stock and part:** the profile of the Job's stock solid and of its model,
   sectioned at Y = 0. Parts are assumed to be solids of revolution about Z. The
   report shows the part's X offset from the axis if it is more than 1 µm.
@@ -136,15 +161,18 @@ These were verified against source and the sample Job, not assumed:
 
 ## Limits
 
-- **Holder and chuck:** not modelled. "Reachable" and the holder-collision check
-  use the insert outline only. A collision is reported when stock stands above
-  the whole insert over at least 0.25 mm of its axial span. A radial plunge
-  clears its own kerf, so plunging deeper than the insert height is not
-  reported.
-- **Stock shape:** assumed solid to the axis (no bores). The axis must be Z.
+- **Holder, boring bar and chuck:** not modelled. "Reachable" and the
+  collision check use the insert outline only. A collision is reported when
+  stock stands beyond the insert's back over at least 0.25 mm of the columns a
+  move crosses: above its top, or inside its bottom for an internal tool, as
+  when boring from solid. A radial plunge clears its own kerf, so plunging
+  deeper than the insert height is not reported.
+- **Stock shape:** an outside and a bore per angle and position, so no
+  undercut pockets in a wall. The axis must be Z.
+- **Drilling:** not simulated yet; the starting hole stands in for it. A drill
+  would be an internal tool at X 0, whose outline is the drill's profile.
 - **Diameter mode:** G7/G8 are reported, not applied.
 - **Threads:**
-  - External only, since the stock is solid to the axis.
   - G76 is reported, not simulated yet.
   - The tool is taken as a flat profile in the XZ plane, ignoring the helix's
     lead angle.
@@ -160,7 +188,8 @@ These were verified against source and the sample Job, not assumed:
     python3 -m unittest discover -s tests
 
 - **Core:** pure tests, plus end-to-end runs of the sample Jobs (fixtures
-  extracted from `turning_test2.FCStd` and `threading_test.FCStd`).
+  extracted from `turning_test2.FCStd`, `threading_test.FCStd` and
+  `boring_test.FCStd`).
 - **FreeCAD side:** `tests/test_adapter.py` and `tests/test_gui_headless.py`
   run the adapter, task panel, Coin scene and command registration. They use
   stub FreeCAD modules (`tests/fakefreecad.py`), a fake Job built from the

@@ -97,3 +97,70 @@ def make_thread_doc(fake):
     doc = types.SimpleNamespace(Objects=list(objs.values()), findObjects=lambda t, n: [job],
                                 getObject=lambda name: objs.get(name))
     return doc, job, op, tc
+
+
+def make_boring_doc(fake, min_diameter=10.0):
+    """
+    The boring Job (boring_test.FCStd): a tube (OD 29.994, bore 19.994) from a
+    r 15 cylinder; TurnFace, TurnProfile (Side Internal, Min Diameter 10),
+    TurnRough, and an internal M22x2.5 TurnThread.
+    """
+    def load(fn):
+        with open(os.path.join(DATA, "boring", fn)) as f:
+            return json.load(f)
+
+    q = lambda v: types.SimpleNamespace(Value=v)  # noqa: E731
+    sd = load("stock.json")
+    r = sd["radius"]
+    stock = types.SimpleNamespace(Name="Stock", Label="Stock", ViewObject=VO(),
+                                  Shape=fake.Shape(sd["edges"], fake.BoundBox(-r, -r, sd["z_min"], r, r, sd["z_max"])))
+    model = types.SimpleNamespace(Name="Clone", Label="Clone", ViewObject=VO(),
+                                  Shape=fake.Shape(load("part_section.json")["edges"],
+                                                   fake.BoundBox(-15.0, -15.0, -113.0, 15.0, 15.0, -3.0)))
+    mesh = ([(0, 0, 0), (1, 0, 0), (0, 0, 1)], [(0, 1, 2)])
+    iso = types.SimpleNamespace(Name="Lathe_Iso_Insert", Label="Lathe Iso Insert", ShapeID="isoshape",
+                                Shape=fake.Shape(load("tool_iso_section.json")["edges"],
+                                                 fake.BoundBox(0.0, -1.0, 0.0, 5.79, 0.0, 5.79), section_y=-0.5,
+                                                 mesh=mesh),
+                                TipRadius=q(0.4), EdgeLength=q(5.0), TipAngle=q(60.0), Rotation=q(45.0))
+    thr = types.SimpleNamespace(Name="threading", Label="threading", ShapeID="threading",
+                                Shape=fake.Shape(load("tool_threading_section.json")["edges"],
+                                                 fake.BoundBox(0.05, -1.5, -3.0, 11.2, 1.5, 3.0), section_y=0.0,
+                                                 mesh=mesh),
+                                ProfileAngle=q(60.0), TipRadius=q(0.05), Width=q(6.0))
+    tcs = {"iso": types.SimpleNamespace(Tool=iso, SpindleDir="Forward"),
+           "threading": types.SimpleNamespace(Tool=thr, SpindleDir="Forward")}
+    spec = load("ops.json")
+    ops = []
+    for n in spec["order"]:
+        o = spec["ops"][n]
+        internal = o["internal"]
+        # the TurningAddon proxies answer is_internal (Rough/Profile) or internal (Thread)
+        if n == "TurnThread":
+            proxy = type("ObjectTurnThread", (), {"__module__": "PathTurnScripts.PathTurnThread",
+                                                  "internal": lambda self, obj, v=internal: v})()
+        else:
+            proxy = type("ObjectTurn", (), {"__module__": "PathTurnScripts.PathTurn" + n[4:],
+                                            "is_internal": lambda self, obj, v=internal: v})()
+        with open(os.path.join(DATA, "boring", n + ".nc")) as f:
+            cmds = [Cmd(c, p) for c, p in parse_gcode_text(f.read())]
+        op = types.SimpleNamespace(Name=n, Label=n, Active=True, Visibility=True, ViewObject=VO(), Proxy=proxy,
+                                   ToolController=tcs[o["tool"]], Path=types.SimpleNamespace(Commands=cmds))
+        if "SetMinDiameter" in o:
+            op.SetMinDiameter = o["SetMinDiameter"]
+            op.MinDiameter = q(min_diameter)
+        if "Side" in o:
+            op.Side = o["Side"]
+        for k in ("Pitch", "ThreadDepth", "ThreadDiameter"):
+            if k in o:
+                setattr(op, k, q(o[k]))
+        if "ThreadReport" in o:
+            op.ThreadReport = o["ThreadReport"]
+        ops.append(op)
+    job = types.SimpleNamespace(Name="Job", Label="Job", ViewObject=VO(), Stock=stock,
+                                Model=types.SimpleNamespace(OutList=[model]),
+                                Operations=types.SimpleNamespace(OutList=ops))
+    objs = {o.Name: o for o in [job, stock, model] + ops}
+    doc = types.SimpleNamespace(Objects=list(objs.values()), findObjects=lambda t, n: [job],
+                                getObject=lambda name: objs.get(name))
+    return doc, job, ops

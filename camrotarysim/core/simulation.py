@@ -28,6 +28,9 @@ class OpInput:
     # from +Z (a right-hand thread when the tool feeds toward -Z), -1 = clockwise
     spindle: int = 1
     meta: dict = None   # op data for reports (e.g. thread properties)
+    # an internal op (boring, internal thread): the tool is used inside, its
+    # outline mirrored about the control point (see ToolOutline.mirrored)
+    internal: bool = False
 
 
 @dataclass
@@ -47,6 +50,9 @@ class Simulation:
                  thread_angles=120, snapshot_budget=96 * 2 ** 20):
         self.stock = stock
         self.ops = ops
+        for op in ops:
+            if op.internal and not getattr(op.tool, "internal", False):
+                op.tool = op.tool.mirrored()
         self.step = float(step)
         self.angle_step = float(angle_step)
         self.rapid_tol = rapid_tol
@@ -238,12 +244,14 @@ class Simulation:
         op = self.ops[move.op]
         kin = self._kinematics(move.op)
         pts = self._samples[mi][first:last]
-        if first == 0:
-            self._move_start = self.stock.profile() if move.kind == RAPID else None
-        start_prof = getattr(self, "_move_start", None)
+        if first == 0 or getattr(self, "_move_start_index", None) != mi:
+            # the stock when the move began: a rapid's cut is measured against it
+            self._move_start = (self.stock.profile(), self.stock.inner_profile())
+            self._move_start_index = mi
+        start_prof = self._move_start if move.kind == RAPID else None
         worst_removed = 0.0
-        worst_buried = 0.0
-        where_r = where_b = None
+        where_r = None
+        excess = where = None
         for p in pts:
             c = kin.apply(self.stock, op.tool, p, self._max_radius)
             if c is None:
@@ -251,18 +259,57 @@ class Simulation:
             # rapids: depth into the stock as it was when the move began
             depth = c.removed
             if start_prof is not None:
-                depth = float(np.max(start_prof[c.j0:c.j1] - c.low, initial=0.0))
+                outer, inner = start_prof[0][c.j0:c.j1], start_prof[1][c.j0:c.j1]
+                if c.high is not None:   # internal tool: how far it went past the bore, into material
+                    depth = float(np.max(np.minimum(c.high, outer) - inner, initial=0.0))
+                else:
+                    depth = float(np.max(outer - np.maximum(c.low, inner), initial=0.0))
             if depth > worst_removed:
                 worst_removed, where_r = depth, p
-            if c.buried > worst_buried:
-                worst_buried, where_b = c.buried, p
+            if c.excess is not None and len(c.excess):
+                if excess is None:
+                    excess = np.zeros(self.stock.n_s)
+                    where = [None] * self.stock.n_s
+                seg = excess[c.j0:c.j1]
+                better = c.excess > seg
+                if better.any():
+                    np.maximum(seg, c.excess, out=seg)
+                    for j in np.nonzero(better)[0]:
+                        where[c.j0 + j] = p
         if len(pts):
             self.position = tuple(pts[-1])
-        acc = self._move_events.setdefault(mi, {"removed": 0.0, "buried": 0.0, "pr": None, "pb": None})
+        acc = self._move_events.setdefault(mi, {"removed": 0.0, "pr": None, "excess": None, "where": None})
         if worst_removed > acc["removed"]:
             acc["removed"], acc["pr"] = worst_removed, where_r
-        if worst_buried > acc["buried"]:
-            acc["buried"], acc["pb"] = worst_buried, where_b
+        if excess is not None:
+            if acc["excess"] is None:
+                acc["excess"], acc["where"] = excess, where
+            else:
+                better = excess > acc["excess"]
+                acc["excess"][better] = excess[better]
+                for j in np.nonzero(better)[0]:
+                    acc["where"][j] = where[j]
+
+    def _collision(self, acc):
+        """
+        Worst material beyond the insert's back over a move, counted only on
+        runs of columns at least collision_width long (the move's columns
+        collected together): (depth, position) or None.
+        """
+        if acc.get("excess") is None:
+            return None
+        ex = acc["excess"]
+        kin = self.default_kinematics
+        k = max(1, int(round(getattr(kin, "collision_width", 0.25) / self.stock.ds)))
+        best, at = 0.0, None
+        flagged = ex > self.collision_tol
+        d = np.diff(np.concatenate([[0], flagged.astype(np.int8), [0]]))
+        for a, b in zip(np.nonzero(d == 1)[0], np.nonzero(d == -1)[0]):
+            if b - a >= k:
+                j = a + int(np.argmax(ex[a:b]))
+                if ex[j] > best:
+                    best, at = float(ex[j]), acc["where"][j]
+        return (best, at) if at is not None else None
 
     def _finish_move(self, mi):
         move = self.moves[mi]
@@ -273,13 +320,17 @@ class Simulation:
                 self.events.append(Event(
                     "rapid_cut", move.op, name, move.index, tuple(acc["pr"]), acc["removed"],
                     "G0 cuts %.3f mm into stock" % acc["removed"]))
-            if acc["buried"] > self.collision_tol:
+            hit = self._collision(acc)
+            if hit:
+                depth, at = hit
                 self.events.append(Event(
-                    "holder_collision", move.op, name, move.index, tuple(acc["pb"]), acc["buried"],
-                    "stock %.3f mm above the insert's top: holder would collide" % acc["buried"]))
+                    "holder_collision", move.op, name, move.index, tuple(at), depth,
+                    ("stock %.3f mm inside the insert's back: the boring bar would collide"
+                     if self.ops[move.op].internal
+                     else "stock %.3f mm above the insert's top: holder would collide") % depth))
         if not any(e.kind == "parted" for e in self.events):
             prof = self.stock.profile()
-            gone = prof <= 1e-3
+            gone = self.stock.material() <= 1e-3
             if gone.any():
                 solid = np.nonzero(~gone)[0]
                 inner = np.nonzero(gone)[0]

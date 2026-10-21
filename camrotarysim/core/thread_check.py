@@ -3,12 +3,16 @@
 Thread check: find the threads a simulation cut and measure them.
 
 Measured on the simulated stock, over whole pitches in the interior of the
-thread (away from its ends):
-- major diameter: the crests (largest radius per angle, median over angles);
-- minor diameter: the roots (smallest radius per angle);
+thread (away from its ends), on the outside for an external thread and on
+the bore for an internal one:
+- major and minor diameter: the largest and smallest radius per angle
+  (median over angles); crests and roots swap between external and internal;
 - pitch diameter: where the groove and the ridge are equally wide. Over a
   whole number of pitches that is the median radius, which needs no
-  assumption about the profile.
+  assumption about the profile. When a thread is so shallow (or deep) that
+  the groove is narrower (wider) than the ridge even at the crests (roots),
+  that level lies outside the material; it is then extrapolated along the
+  flanks, which are straight, from the groove's width at two radii.
 
 Compared, when the op provides them (TurningAddon Turn Thread), with the
 pitch diameter range and major diameter range in its ThreadReport, and the
@@ -34,10 +38,11 @@ class ThreadZone:
     pitch: float
     z0: float           # axial extent cut by the passes (tool outline included)
     z1: float
-    deepest: float      # smallest programmed radius of the passes (the tool's control point)
+    deepest: float      # deepest programmed radius of the passes (the tool's control point)
     passes: int
     pitches: List[float] = field(default_factory=list)
     meta: dict = field(default_factory=dict)
+    internal: bool = False
 
 
 @dataclass
@@ -49,6 +54,7 @@ class ThreadResult:
     span: Optional[tuple] = None
     expected_pitch: Optional[tuple] = None    # (min, max) diameters
     expected_major: Optional[tuple] = None
+    expected_minor: Optional[tuple] = None
     expected_root: Optional[float] = None     # diameter the control point should reach
     verdict: str = ""                          # "ok" | "shallow" | "deep" | ""
     notes: List[str] = field(default_factory=list)
@@ -62,11 +68,13 @@ def thread_zones(sim):
         op = sim.ops[m.op]
         z = zones.get(m.op)
         lo, hi = min(m.start[2], m.end[2]) + op.tool.zmin, max(m.start[2], m.end[2]) + op.tool.zmax
-        x = min(m.start[0], m.end[0])
+        internal = bool(op.internal)
+        x = max(m.start[0], m.end[0]) if internal else min(m.start[0], m.end[0])
         if z is None:
-            zones[m.op] = ThreadZone(m.op, op.name, m.pitch, lo, hi, x, 1, [m.pitch], dict(op.meta or {}))
+            zones[m.op] = ThreadZone(m.op, op.name, m.pitch, lo, hi, x, 1, [m.pitch], dict(op.meta or {}), internal)
         else:
-            z.z0, z.z1, z.deepest = min(z.z0, lo), max(z.z1, hi), min(z.deepest, x)
+            z.z0, z.z1 = min(z.z0, lo), max(z.z1, hi)
+            z.deepest = max(z.deepest, x) if internal else min(z.deepest, x)
             z.passes += 1
             z.pitches.append(m.pitch)
     st = sim.stock
@@ -93,12 +101,13 @@ def measure(stock, zone, tool_half_width=0.0, tol=0.01):
     report = meta.get("ThreadReport", "")
     res.expected_pitch = _range(report, "Pitch diameter")
     res.expected_major = _range(report, "major diameter to")
+    res.expected_minor = _range(report, "minor diameter to")
     if meta.get("ThreadDiameter") and meta.get("ThreadDepth"):
-        res.expected_root = float(meta["ThreadDiameter"]) - 2 * float(meta["ThreadDepth"])
-        short = 2 * zone.deepest - res.expected_root
-        if abs(short) > 2 * tol:
-            res.notes.append("the deepest pass reaches diameter %.3f, the op's root is %.3f"
-                             % (2 * zone.deepest, res.expected_root))
+        sign = 1 if zone.internal else -1
+        res.expected_root = float(meta["ThreadDiameter"]) + sign * 2 * float(meta["ThreadDepth"])
+        if abs(2 * zone.deepest - res.expected_root) > 2 * tol:
+            res.notes.append("the deepest pass reaches diameter %.3f, the op's %s is %.3f"
+                             % (2 * zone.deepest, "major" if zone.internal else "root", res.expected_root))
     if stock.n_theta == 1:
         res.notes.append("stock has no angular detail: nothing to measure")
         return res
@@ -112,41 +121,66 @@ def measure(stock, zone, tool_half_width=0.0, tol=0.01):
     mid = (a + b) / 2
     a, b = mid - n_p * p / 2, mid + n_p * p / 2
     j0, j1 = stock.column_range(a, b)
-    R = stock.R[:, j0:j1]
+    R = (stock.Rin if zone.internal else stock.R)[:, j0:j1]
     res.span = (a, b)
     res.major = 2 * float(np.median(R.max(axis=1)))
     res.minor = 2 * float(np.median(R.min(axis=1)))
     res.pitch_diameter = 2 * float(np.median(R))
+    lo_r, hi_r = res.minor / 2, res.major / 2
+    if hi_r - lo_r > 1e-6 and min(abs(res.pitch_diameter / 2 - lo_r), abs(res.pitch_diameter / 2 - hi_r)) < 1e-6:
+        # saturated at the crests or roots: extrapolate the groove fraction along the flanks
+
+        def groove(r):  # share of the surface cut deeper than radius r
+            return float(np.mean(R > r)) if zone.internal else float(np.mean(R < r))
+
+        r1, r2 = lo_r + 0.3 * (hi_r - lo_r), lo_r + 0.7 * (hi_r - lo_r)
+        f1, f2 = groove(r1), groove(r2)
+        if abs(f2 - f1) > 1e-9:
+            res.pitch_diameter = 2 * (r1 + (0.5 - f1) * (r2 - r1) / (f2 - f1))
+            res.notes.append("pitch line outside the material (the groove is %s than the ridge even at the %s): "
+                             "extrapolated along the flanks"
+                             % (("narrower", "crests") if (f1 + f2) / 2 < 0.5 else ("wider", "roots")))
     if res.expected_pitch:
         lo, hi = res.expected_pitch
+        # external threads come out too big when shallow, internal ones too small
+        over, under = ("deep", "shallow") if zone.internal else ("shallow", "deep")
+        say = {"shallow": "not cut deep enough", "deep": "cut too deep"}
         if res.pitch_diameter > hi + tol:
-            res.verdict = "shallow"
-            res.notes.append("pitch diameter %.3f is %.3f over the op's range %.3f-%.3f: not cut deep enough"
-                             % (res.pitch_diameter, res.pitch_diameter - hi, lo, hi))
+            res.verdict = over
+            res.notes.append("pitch diameter %.3f is %.3f over the op's range %.3f-%.3f: %s"
+                             % (res.pitch_diameter, res.pitch_diameter - hi, lo, hi, say[over]))
         elif res.pitch_diameter < lo - tol:
-            res.verdict = "deep"
-            res.notes.append("pitch diameter %.3f is %.3f under the op's range %.3f-%.3f: cut too deep"
-                             % (res.pitch_diameter, lo - res.pitch_diameter, lo, hi))
+            res.verdict = under
+            res.notes.append("pitch diameter %.3f is %.3f under the op's range %.3f-%.3f: %s"
+                             % (res.pitch_diameter, lo - res.pitch_diameter, lo, hi, say[under]))
         else:
             res.verdict = "ok"
-    if res.expected_major:
-        lo, hi = res.expected_major
-        if res.major > hi + tol or res.major < lo - tol:
-            res.notes.append("crests at diameter %.3f, outside the op's major diameter %.3f-%.3f"
-                             % (res.major, lo, hi))
+    # the crests: the major diameter of an external thread, the minor of an internal one
+    crest, rng, name = ((res.minor, res.expected_minor, "minor") if zone.internal
+                        else (res.major, res.expected_major, "major"))
+    if rng:
+        lo, hi = rng
+        if crest > hi + tol or crest < lo - tol:
+            res.notes.append("crests at diameter %.3f, outside the op's %s diameter %.3f-%.3f" % (crest, name, lo, hi))
     return res
 
 
 def format_thread(res):
     z = res.zone
-    lines = ["  %s: pitch %g, %d passes, Z %.3f to %.3f" % (z.name, z.pitch, z.passes, z.z1, z.z0)]
+    lines = ["  %s: %s, pitch %g, %d passes, Z %.3f to %.3f"
+             % (z.name, "internal" if z.internal else "external", z.pitch, z.passes, z.z1, z.z0)]
     if res.pitch_diameter is not None:
         lines.append("    measured over Z %.3f to %.3f: major %.3f, pitch %.3f, minor %.3f"
                      % (res.span[1], res.span[0], res.major, res.pitch_diameter, res.minor))
     if res.expected_pitch:
-        lines.append("    op: pitch diameter %.3f-%.3f%s" % (res.expected_pitch + (
-            ", major %.3f-%.3f" % res.expected_major if res.expected_major else "",)))
+        extra = ""
+        if res.expected_major:
+            extra += ", major %.3f-%.3f" % res.expected_major
+        if res.expected_minor:
+            extra += ", minor %.3f-%.3f" % res.expected_minor
+        lines.append("    op: pitch diameter %.3f-%.3f%s" % (res.expected_pitch + (extra,)))
     lines.append("    deepest pass: control point at diameter %.3f" % (2 * z.deepest)
-                 + (" (op's root %.3f)" % res.expected_root if res.expected_root else ""))
+                 + (" (op's %s %.3f)" % ("major" if z.internal else "root", res.expected_root)
+                    if res.expected_root else ""))
     lines += ["    " + n for n in res.notes]
     return lines

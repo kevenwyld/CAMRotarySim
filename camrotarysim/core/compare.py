@@ -89,6 +89,71 @@ def part_profile(polylines, s, side=1.0):
     return out
 
 
+def part_inner_profile(polylines, s, side=1.0):
+    """
+    The part's bore radius per column (0 where it is solid to the axis or
+    absent), from section polylines: along the line Z = s on one side of the
+    axis, an odd number of crossings means material reaches the axis, an
+    even number (two or more) that it starts at the first crossing.
+    """
+    s = np.asarray(s, dtype=float)
+    hits = [[] for _ in range(len(s))]
+    for pl in polylines:
+        p = np.asarray(pl, dtype=float)
+        if len(p) < 2:
+            continue
+        x = p[:, 0] * side
+        z = p[:, 1]
+        for i in range(len(p) - 1):
+            xa, za, xb, zb = x[i], z[i], x[i + 1], z[i + 1]
+            if (xa <= 0 and xb <= 0) or abs(zb - za) < 1e-12:
+                continue
+            lo, hi = min(za, zb), max(za, zb)
+            j0, j1 = np.searchsorted(s, lo, "left"), np.searchsorted(s, hi, "left")  # half-open [lo, hi)
+            for j in range(j0, j1):
+                xv = xa + (s[j] - za) / (zb - za) * (xb - xa)
+                if xv > 0:
+                    hits[j].append(xv)
+    out = np.zeros(len(s))
+    for j, h in enumerate(hits):
+        if len(h) >= 2 and len(h) % 2 == 0:
+            out[j] = min(h)
+    return out
+
+
+def reachable_bore(part_in, part_out, s, tool):
+    """
+    Largest bore radius per column an internal tool can leave without
+    cutting the part, approaching from the axis: reachable_profile() on the
+    mirrored problem (radius r -> C - r, the tool mirrored back to external).
+    Only meaningful where the part is present (part_out > 0).
+    """
+    part_in = np.asarray(part_in, dtype=float)
+    present = np.asarray(part_out) > 0
+    C = float(np.max(part_out)) + 1.0
+    q = np.where(present, C - part_in, 0.0)
+    ext = tool.mirrored() if getattr(tool, "internal", False) else tool
+    return np.where(present, np.minimum(C - reachable_profile(q, s, ext), part_in), part_in)
+
+
+def compare_bore(stock_in, part_in, part_out, s, gouge_tol=0.01, uncut_tol=0.05, reachable=None, thread_zones=()):
+    """
+    The bore against the part's: gouge where the stock's bore is wider than
+    the part's (including a hole where the part is solid), uncut where it is
+    narrower, unreachable where the internal tools can't get there. Only
+    where the part is present.
+    """
+    stock_in = np.asarray(stock_in, dtype=float)
+    part_in = np.asarray(part_in, dtype=float)
+    present = np.asarray(part_out) > 0
+    # positive: bore too small (material left); negative: cut into the part
+    dev = np.where(present, part_in - stock_in, 0.0)
+    res = compare(part_in + dev, part_in, s, gouge_tol, uncut_tol,
+                  None if reachable is None else part_in - (np.asarray(reachable) - part_in), thread_zones)
+    res.deviation = dev
+    return res
+
+
 def reachable_profile(part_R, s, tool):
     """
     Lowest stock radius per column the tool can leave without cutting the

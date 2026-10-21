@@ -7,6 +7,8 @@ PySide6.
 """
 
 import importlib
+
+import numpy as np
 import os
 import sys
 import unittest
@@ -24,7 +26,7 @@ try:
 except ImportError:
     HAVE_QT = False
 
-from fakejob import make_doc, make_thread_doc  # noqa: E402
+from fakejob import make_boring_doc, make_doc, make_thread_doc  # noqa: E402
 
 
 _APP = None
@@ -140,6 +142,46 @@ class TestHeadlessGui(unittest.TestCase):
         # changing the hand or the angles forces a rebuild
         p.combo_hand.setCurrentIndex(1)
         self.assertTrue(p.dirty)
+        p.reject()
+        p.timer.deleteLater()
+        p.form.deleteLater()
+        self.app.processEvents()
+
+    def test_task_panel_boring_job(self):
+        doc, job, ops = make_boring_doc(self.fake)
+        self.fc.ActiveDocument = doc
+        from camrotarysim.gui.taskpanel import TaskPanel
+        p = TaskPanel(doc)
+        self.assertEqual(p.combo_hole.currentIndex(), 0)       # Auto
+        self.assertFalse(p.spin_hole_d.isEnabled())
+        p.on_play()
+        self.assertIsNotNone(p.sim, p.report.toPlainText())
+        # Auto found the hole: shown in the (greyed) fields
+        self.assertAlmostEqual(p.spin_hole_d.value(), 10.0)
+        self.assertAlmostEqual(p.spin_hole_depth.value(), 113.0)
+        # the internal op's tool is drawn mirrored about its control point
+        v_ext, v_int = p.tool_meshes[0][0], p.tool_meshes[1][0]
+        np.testing.assert_allclose(v_int[:, 0], -v_ext[:, 0])
+        n = 0
+        while p.timer.isActive() and n < 200000:
+            p.on_tick()
+            n += 1
+        self.assertTrue(p.sim.done)
+        text = p.report.toPlainText()
+        self.assertIn("Bore (positive", text)
+        self.assertIn("TurnThread: internal", text)
+        self.assertIn("not cut deep enough", text)
+        self.assertIn("starting hole 10.000 from TurnProfile's Min Diameter, through", text)
+        self.assertIn("Events: none", text)
+        # a custom hole: the fields come alive and the simulation is rebuilt
+        p.combo_hole.setCurrentIndex(2)
+        self.assertTrue(p.spin_hole_d.isEnabled())
+        self.assertTrue(p.dirty)
+        p.spin_hole_d.setValue(0.0)    # no hole: boring hits the bar
+        p.on_play()
+        while p.timer.isActive():
+            p.on_tick()
+        self.assertIn("boring bar would collide", p.report.toPlainText())
         p.reject()
         p.timer.deleteLater()
         p.form.deleteLater()

@@ -1,0 +1,35 @@
+{
+ "order": [
+  "TurnFace",
+  "TurnProfile",
+  "TurnRough",
+  "TurnThread"
+ ],
+ "ops": {
+  "TurnFace": {
+   "internal": false,
+   "tool": "iso"
+  },
+  "TurnProfile": {
+   "internal": true,
+   "tool": "iso",
+   "Side": "Internal",
+   "SetMinDiameter": true,
+   "MinDiameter": 10.0
+  },
+  "TurnRough": {
+   "internal": false,
+   "tool": "iso",
+   "Side": "External"
+  },
+  "TurnThread": {
+   "internal": true,
+   "tool": "threading",
+   "Pitch": 2.5,
+   "ThreadDepth": 1.055898749999999,
+   "ThreadDiameter": 20.0,
+   "ThreadType": "From the selection",
+   "ThreadReport": "Metric coarse M22 internal, class 6H\nBore the minor diameter to 19.294-19.744 first: the selected 20.000 is 0.256 over\nPitch diameter 20.376-20.600, cut to 20.488\nMajor diameter 22.112, 1.056 deep from the selected diameter\n10 passes + 1 spring: first 0.227, last 0.072\nZ -3.000 mm to -113.000 mm (110.000 mm long); each pass starts 7.500 mm in front"
+  }
+ }
+}

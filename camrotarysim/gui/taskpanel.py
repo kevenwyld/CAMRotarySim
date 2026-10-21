@@ -15,7 +15,7 @@ from PySide import QtCore, QtGui
 
 from .. import freecad_adapter as fa
 from ..core import compare, thread_check
-from ..core.mesh import column_colours, revolve
+from ..core.mesh import bore_colours, column_colours, revolve
 from ..core.report import format_report
 from ..core.simulation import Simulation
 from .view import SimScene, outline_prism
@@ -26,6 +26,7 @@ SAMPLES_PER_TICK = 20                # at speed 1
 TICK_MS = 40
 MESH_INTERVAL = 0.12                 # s between stock mesh rebuilds during playback (at least)
 HANDS = ("Right-hand", "Left-hand")
+HOLES = ("Auto", "None", "Custom")
 
 
 def _icon(obj):
@@ -47,6 +48,8 @@ class TaskPanel:
         self.dirty = True
         self.hidden = []
         self.reach = None
+        self.reach_bore = None
+        self.part_in = None
         self.part_R = None
         self.part_neg = None
         self.tool_meshes = {}
@@ -114,6 +117,25 @@ class TaskPanel:
         self.combo_hand.currentIndexChanged.connect(self.mark_dirty)
         grid.addWidget(QtGui.QLabel(translate("Forward spindle cuts")), 4, 0)
         grid.addWidget(self.combo_hand, 4, 1)
+        # until drilling is simulated: the hole internal ops bore from
+        self.combo_hole = QtGui.QComboBox()
+        for h in HOLES:
+            self.combo_hole.addItem(translate(h))
+        self.combo_hole.setToolTip(translate(
+            "The hole that exists before the program (drilled, or in the stock), for boring and internal "
+            "threads. Auto: the Min Diameter set on an internal op, down the model's bore (or through)."))
+        self.spin_hole_d = self._spin(0.0, 10000.0, 0.0, 3, 0.5)
+        self.spin_hole_depth = self._spin(0.0, 10000.0, 0.0, 3, 1.0)
+        self.spin_hole_d.setToolTip(translate("Starting hole diameter"))
+        self.spin_hole_depth.setToolTip(translate("Starting hole depth from the stock's front"))
+        row_hole = QtGui.QHBoxLayout()
+        for widget in (self.combo_hole, self.spin_hole_d, self.spin_hole_depth):
+            signal = widget.currentIndexChanged if widget is self.combo_hole else widget.valueChanged
+            signal.connect(self.on_hole_changed)
+            row_hole.addWidget(widget)
+        grid.addWidget(QtGui.QLabel(translate("Starting hole")), 5, 0)
+        grid.addLayout(row_hole, 5, 1)
+        self.on_hole_changed()
         lay.addLayout(grid)
 
         self.slider = QtGui.QSlider(QtCore.Qt.Orientation.Horizontal)
@@ -181,6 +203,21 @@ class TaskPanel:
         s.setSuffix(" mm")
         s.setValue(val)
         return s
+
+    def on_hole_changed(self, *_):
+        custom = self.combo_hole.currentIndex() == 2
+        self.spin_hole_d.setEnabled(custom)
+        self.spin_hole_depth.setEnabled(custom)
+        if hasattr(self, "lbl_status"):
+            self.mark_dirty()
+
+    def hole_setting(self):
+        i = self.combo_hole.currentIndex()
+        if i == 0:
+            return "auto"
+        if i == 1:
+            return None
+        return (self.spin_hole_d.value(), self.spin_hole_depth.value())
 
     def getStandardButtons(self):
         return QtGui.QDialogButtonBox.StandardButton.Close
@@ -250,21 +287,35 @@ class TaskPanel:
             right = self.combo_hand.currentIndex() == 0
             self.prefs.SetBool("ForwardLeftHand", not right)
             self.prefs.SetInt("ThreadAngles", self.spin_angles.value())
-            stock, inputs, polylines, notes = fa.build_inputs(job, ops, ds, forward_right_hand=right)
+            stock, inputs, polylines, notes = fa.build_inputs(job, ops, ds, forward_right_hand=right,
+                                                              hole=self.hole_setting())
+            if self.combo_hole.currentIndex() == 0:   # show what Auto found
+                d, depth = stock.hole if getattr(stock, "hole", None) else (0.0, 0.0)
+                for spin, v in ((self.spin_hole_d, d), (self.spin_hole_depth, depth)):
+                    spin.blockSignals(True)
+                    spin.setValue(v)
+                    spin.blockSignals(False)
             self.sim = Simulation(stock, inputs, step=ds, thread_angles=self.spin_angles.value())
             self.zones = thread_check.thread_zones(self.sim)
             self.threads = []
             self.notes = notes
             self.part_R = compare.part_profile(polylines, stock.s) if polylines else None
             self.part_neg = compare.part_profile(polylines, stock.s, -1) if polylines else None
-            self.reach = None
+            self.part_in = compare.part_inner_profile(polylines, stock.s) if polylines else None
+            self.reach = self.reach_bore = None
             if self.part_R is not None:
-                tools = {id(i.tool): i.tool for i in inputs}
-                self.reach = np.min([compare.reachable_profile(self.part_R, stock.s, t) for t in tools.values()],
-                                    axis=0)
+                # inputs' tools as the simulation uses them (internal ones mirrored)
+                ext = {id(i.tool): i.tool for i in self.sim.ops if not i.internal}
+                bor = {id(i.tool): i.tool for i in self.sim.ops if i.internal}
+                if ext:
+                    self.reach = np.min([compare.reachable_profile(self.part_R, stock.s, t)
+                                         for t in ext.values()], axis=0)
+                if bor:
+                    self.reach_bore = np.max([compare.reachable_bore(self.part_in, self.part_R, stock.s, t)
+                                              for t in bor.values()], axis=0)
             self.tool_meshes = {}
-            for i, (op, inp) in enumerate(zip(ops, inputs)):
-                self.tool_meshes[i] = self._tool_mesh(fa.tool_of(op), inp.tool)
+            for i, (op, inp) in enumerate(zip(ops, self.sim.ops)):
+                self.tool_meshes[i] = self._tool_mesh(fa.tool_of(op), inp.tool, inp.internal)
             if self.scene is None:
                 self.scene = SimScene(FreeCADGui.ActiveDocument.ActiveView)
                 self._hide_job(job)
@@ -283,16 +334,21 @@ class TaskPanel:
         return True
 
     @staticmethod
-    def _tool_mesh(tool, outline):
+    def _tool_mesh(tool, outline, internal=False):
+        """The tool's solid (or a prism of its outline), mirrored about the control point when used inside."""
+        cx = outline.control_in_shape[0]
         try:
             shape = tool.Shape.copy()
             shape.Placement = FreeCAD.Placement()
             pts, tris = shape.tessellate(0.02)
             if pts and tris:
-                return np.array([(p.x, p.y, p.z) for p in pts]), np.array(tris), outline.control_in_shape
+                v = np.array([(p.x, p.y, p.z) for p in pts])
+                if internal:
+                    v[:, 0] = 2 * cx - v[:, 0]
+                return v, np.array(tris), outline.control_in_shape
         except Exception:
             pass
-        v, t = outline_prism(outline)
+        v, t = outline_prism(outline)   # the outline is already mirrored for internal use
         return v, t, outline.control_in_shape
 
     def _hide_job(self, job):
@@ -395,8 +451,19 @@ class TaskPanel:
         if self.sim is None or self.part_R is None:
             return None
         st = self.sim.stock
-        return compare.compare(st.profile(), self.part_R, st.s, self.spin_gouge.value(),
-                               self.spin_uncut.value(), self.reach, [(z.z0, z.z1) for z in self.zones])
+        return compare.compare(st.outer_profile(), self.part_R, st.s, self.spin_gouge.value(), self.spin_uncut.value(),
+                               self.reach, [(z.z0, z.z1) for z in self.zones if not z.internal])
+
+    def bore_comparison(self):
+        """The bore against the part's, when either has one."""
+        if self.sim is None or self.part_R is None:
+            return None
+        st = self.sim.stock
+        if not (st.has_bore() or np.any(self.part_in > 0)):
+            return None
+        return compare.compare_bore(st.inner_profile(), self.part_in, self.part_R, st.s, self.spin_gouge.value(),
+                                    self.spin_uncut.value(), self.reach_bore,
+                                    [(z.z0, z.z1) for z in self.zones if z.internal])
 
     def measure_threads(self):
         st = self.sim.stock
@@ -410,12 +477,17 @@ class TaskPanel:
         if self.sim is None or self.scene is None:
             return
         st = self.sim.stock
-        res = self.comparison() if self.chk_dev.isChecked() else None
-        verdicts = ()
+        dev = self.chk_dev.isChecked()
+        res = self.comparison() if dev else None
+        bore = self.bore_comparison() if dev else None
+        outer_v, inner_v = (), ()
         if res is not None and final and self.zones:
-            verdicts = [((t.zone.z0, t.zone.z1), t.verdict) for t in self.measure_threads()]
-        colours = column_colours(st, res.classes if res is not None else None, thread_verdicts=verdicts)
-        v, t, c = revolve(st, colours)
+            measured = self.measure_threads()
+            outer_v = [((t.zone.z0, t.zone.z1), t.verdict) for t in measured if not t.zone.internal]
+            inner_v = [((t.zone.z0, t.zone.z1), t.verdict) for t in measured if t.zone.internal]
+        colours = column_colours(st, res.classes if res is not None else None, thread_verdicts=outer_v)
+        inner = bore_colours(st, bore.classes if bore is not None else None, thread_verdicts=inner_v)
+        v, t, c = revolve(st, colours, inner_colours=inner)
         self.scene.set_stock_mesh(v, t, c)
 
     def update_tool(self):
@@ -454,7 +526,8 @@ class TaskPanel:
         if self.sim is None:
             return
         threads = self.measure_threads() if self.zones else None
-        text = format_report(self.sim, self.comparison(), self.part_R, self.part_neg, threads=threads)
+        text = format_report(self.sim, self.comparison(), self.part_R, self.part_neg, threads=threads,
+                             bore=self.bore_comparison())
         if getattr(self, "notes", None):
             text += "\n\nTools:\n" + "\n".join("  " + n for n in self.notes)
         text += ("\n\nNotes: 'reachable' and holder checks use the insert outline only; "

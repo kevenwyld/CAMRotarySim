@@ -14,7 +14,22 @@ def axis_offset(part_pos, part_neg, min_radius=1.0):
     return float(np.median(part_pos[m] - part_neg[m]) / 2.0)
 
 
-def format_report(sim, result=None, part_pos=None, part_neg=None, max_lines=8, threads=None):
+def _ranges(out, result, max_lines, labels):
+    for kind, label in labels:
+        w = result.worst(kind)
+        out.append("  %s: %s" % (label, "none" if w is None else "%+.3f mm at Z %.3f" % (w.worst, w.at)))
+    for kind, _label in labels:
+        rs = [r for r in result.ranges if r.kind == kind]
+        if not rs:
+            continue
+        out.append("  %s ranges (Z from..to, worst):" % kind)
+        for r in sorted(rs, key=lambda r: -abs(r.worst))[:max_lines]:
+            out.append("    %9.3f .. %9.3f  %+.3f mm" % (r.s0, r.s1, r.worst))
+        if len(rs) > max_lines:
+            out.append("    ... %d more" % (len(rs) - max_lines))
+
+
+def format_report(sim, result=None, part_pos=None, part_neg=None, max_lines=8, threads=None, bore=None):
     out = []
     state = "complete" if sim.done else "%.0f%% simulated" % (100 * sim.progress)
     out.append("Simulation %s: %d moves, %d samples." % (state, len(sim.moves), sim.total_samples))
@@ -42,6 +57,12 @@ def format_report(sim, result=None, part_pos=None, part_neg=None, max_lines=8, t
             off = axis_offset(part_pos, part_neg)
             if off is not None and abs(off) > 1e-3:
                 out.append("  Note: the part's axis is offset %+.4f mm in X from the spindle axis." % off)
+
+    if bore is not None:
+        out.append("")
+        out.append("Bore (positive: material left, negative: cut into the part):")
+        _ranges(out, bore, max_lines, (("gouge", "Worst gouge"), ("uncut", "Worst uncut (path)"),
+                                       ("unreachable", "Worst unreachable (tool shape)")))
 
     if threads:
         from .thread_check import format_thread

@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(HERE, ".."))
 sys.path.insert(0, HERE)
 
 import fakefreecad  # noqa: E402
-from fakejob import make_doc, make_thread_doc  # noqa: E402
+from fakejob import make_boring_doc, make_doc, make_thread_doc  # noqa: E402
 
 
 class TestAdapter(unittest.TestCase):
@@ -90,6 +90,29 @@ class TestAdapter(unittest.TestCase):
         outline, note = self.fa.tool_outline(tool)
         self.assertIn("Threading parameters", note)
         self.assertEqual(outline.control_in_shape, (0.0, 0.0))
+
+    def test_internal_ops_and_starting_hole(self):
+        doc, job, ops = make_boring_doc(fakefreecad)
+        fa = self.fa
+        self.assertEqual([fa.is_internal(o) for o in ops], [False, True, False, True])
+        self.assertEqual(fa.hole_from_ops(ops), (5.0, "TurnProfile"))
+        stock, inputs, polylines, notes = fa.build_inputs(job, ops, 0.05)
+        self.assertEqual([i.internal for i in inputs], [False, True, False, True])
+        # auto: Min Diameter 10, through, as the model's bore runs out at its back end
+        self.assertEqual(stock.hole, (10.0, 113.0))
+        self.assertAlmostEqual(stock.Rin[0, 10], 5.0)
+        self.assertTrue(any("starting hole 10.000 from TurnProfile's Min Diameter, through" in n for n in notes))
+        stock, *_ = fa.build_inputs(job, ops, 0.05, hole=None)
+        self.assertFalse(stock.has_bore())
+        stock, *_ = fa.build_inputs(job, ops, 0.05, hole=(8.0, 40.0))
+        self.assertEqual(stock.hole, (8.0, 40.0))
+        self.assertEqual(stock.Rin[0, stock.column_range(-39.9, -39.9)[0]], 4.0)
+        self.assertEqual(stock.Rin[0, stock.column_range(-40.1, -40.1)[0]], 0.0)
+
+    def test_side_property_fallback(self):
+        op = types.SimpleNamespace(Proxy=object(), Side="Internal")
+        self.assertTrue(self.fa.is_internal(op))
+        self.assertFalse(self.fa.is_internal(types.SimpleNamespace(Proxy=object())))
 
 
 if __name__ == "__main__":
