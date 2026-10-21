@@ -276,6 +276,7 @@ def install():
                                                     sequence=a.get("sequence", 0), allow_flip=a.get("allow_flip"))
             return types.SimpleNamespace(name=data["name"], rotary_axes=axes)
 
+    MachineFactory.list_configuration_files = classmethod(lambda cls: list(cls.files.items()))
     mm.MachineFactory = MachineFactory
     mach.models, models.machine = models, mm
     sys.modules.update({"Machine": mach, "Machine.models": models, "Machine.models.machine": mm})

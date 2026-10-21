@@ -31,6 +31,9 @@ class OpInput:
     # an internal op (boring, internal thread): the tool is used inside, its
     # outline mirrored about the control point (see ToolOutline.mirrored)
     internal: bool = False
+    # where the tool is when the op begins (X Y Z A B C in the op's own frame), when known:
+    # carried between ops in different frames (see indexing.with_indexing)
+    start: list = None
 
 
 @dataclass
@@ -67,6 +70,8 @@ class Simulation:
         interp = MotionInterpreter(MotionState())
         self.moves = []
         for i, op in enumerate(ops):
+            if op.start is not None:
+                interp.state.pos = [float(v) for v in op.start]
             self.moves.extend(interp.run(op.commands, i))
         self.diagnostics: List[Diagnostic] = interp.diagnostics
 
@@ -257,6 +262,7 @@ class Simulation:
         worst_removed = 0.0
         where_r = None
         excess = where = None
+        swept = 0.0
         for p in self._candidates(kin, op.tool, pts):
             c = kin.apply(self.stock, op.tool, p, self._max_radius)
             if c is None:
@@ -271,6 +277,8 @@ class Simulation:
                     depth = float(np.max(outer - np.maximum(c.low, inner), initial=0.0))
             if depth > worst_removed:
                 worst_removed, where_r = depth, p
+            if c.volume is not None:
+                swept += c.volume
             if c.excess is not None and len(c.excess):
                 if excess is None:
                     excess = np.zeros(self.stock.n_s)
@@ -283,7 +291,9 @@ class Simulation:
                         where[c.j0 + j] = p
         if len(pts):
             self.position = tuple(pts[-1])
-        acc = self._move_events.setdefault(mi, {"removed": 0.0, "pr": None, "excess": None, "where": None})
+        acc = self._move_events.setdefault(mi, {"removed": 0.0, "pr": None, "excess": None, "where": None,
+                                                "volume": 0.0})
+        acc["volume"] += swept
         if worst_removed > acc["removed"]:
             acc["removed"], acc["pr"] = worst_removed, where_r
         if excess is not None:
@@ -365,9 +375,16 @@ class Simulation:
         if acc:
             name = self.ops[move.op].name
             if move.kind == RAPID and acc["removed"] > self.rapid_tol:
-                self.events.append(Event(
-                    "rapid_cut", move.op, name, move.index, tuple(acc["pr"]), acc["removed"],
-                    "G0 cuts %.3f mm into stock" % acc["removed"]))
+                turns = any(abs(move.end[i] - move.start[i]) > 1e-9 for i in (3, 4, 5))
+                vol = acc.get("volume", 0.0)
+                if turns:
+                    msg = "turning the rotary axis sweeps the stock into the tool"
+                else:
+                    msg = "G0 cuts %.3f mm into stock" % acc["removed"]
+                if vol > 0:
+                    msg += " (%.1f mm3 cut)" % vol
+                self.events.append(Event("rapid_cut", move.op, name, move.index, tuple(acc["pr"]),
+                                         vol if turns else acc["removed"], msg))
             hit = self._collision(acc)
             if hit:
                 depth, at = hit

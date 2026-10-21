@@ -219,6 +219,8 @@ class TestHeadlessGui(unittest.TestCase):
         self.assertEqual([p.list_ops.item(i).checkState().name for i in range(p.list_ops.count())],
                          ["Checked"] * 3)
         p.spin_grid.setValue(1.0)          # coarse, for speed
+        p.change_speed(-10)
+        p.change_speed(1)                  # x5: rotary moves at 15 degrees per tick
         p.on_play()
         self.assertTrue(p.milling)
         self.assertIsNotNone(p.sim, p.report.toPlainText())
@@ -227,17 +229,25 @@ class TestHeadlessGui(unittest.TestCase):
             p.on_tick()
             angles.add(round(p.milling_angle()[0], 6))
         self.assertTrue(p.sim.done)
-        self.assertEqual(angles, {-90.0, 0.0, 90.0})        # the workpiece turned for each work plane
+        # the workpiece turned to each work plane, through the angles between
+        self.assertTrue({-90.0, 0.0, 90.0} <= angles)
+        self.assertTrue(any(-60 < a < -30 for a in angles) and any(30 < a < 60 for a in angles))
+        self.assertGreater(len(angles), 12)
+        # a tick never jumps across a rotation
+        self.assertTrue(all(abs(b - a) <= 15.0 + 1e-6 for a, b in zip(sorted(angles), sorted(angles)[1:])))
+        self.assertGreater(p.spin_retract.value(), 35.355)     # Auto shows the retract it used
         rot = p.scene.work_xf.rotation.value
         self.assertAlmostEqual(rot[1], math.radians(90.0))   # last op: +Y face, A +90
         text = p.report.toPlainText()
         self.assertIn("Adaptive002: (0.000, 1.000, -0.000), A +90.0", text)
         self.assertIn("Worst gouge: none", text)
         self.assertIn("rotary axis A from machine 'tormach 4-axis'", text)
+        self.assertIn("pre-rotary move 'G53 G0 Z-40'", text)
+        self.assertIn("Events: none", text)
         self.assertGreater(len(p.scene.stock_coords.point.values), 1000)
         self.assertGreater(len(p.scene.partmesh_coords.point.values), 1000)
         # the tool is drawn upright in the machine frame
-        self.assertEqual(p.scene.tool_xf.rotation.value[0][2], (0.0, 0.0, 1.0))
+        np.testing.assert_allclose(p.scene.tool_xf.rotation.value[0][2], (0.0, 0.0, 1.0), atol=1e-9)
         np.testing.assert_allclose(p.scene.tool_xf.rotation.value[0][1], (0.0, 0.0, 1.0), atol=1e-9)
         p.reject()
         p.timer.deleteLater()

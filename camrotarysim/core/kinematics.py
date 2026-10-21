@@ -17,13 +17,14 @@ from .stock import RotaryAxis
 class Contact:
     """What one tool position did to the stock."""
 
-    __slots__ = ("removed", "buried", "j0", "j1", "low", "high", "excess")
+    __slots__ = ("removed", "buried", "j0", "j1", "low", "high", "excess", "volume")
 
     def __init__(self, removed=0.0, buried=0.0, j0=0, j1=0, low=None, high=None, excess=None):
         self.removed = removed  # largest radial depth removed by this sample at any column (mm)
         # columns touched and the radius the tool left: low (outside) or high (bore)
         self.j0, self.j1, self.low, self.high = j0, j1, low, high
         self.excess = excess  # per column j0..j1: material beyond the insert's back before the cut (mm)
+        self.volume = None    # milling: volume this position removed (mm3)
         self.buried = buried    # stock beyond the insert's back within its span (mm); > 0 = holder/bar collision
 
 

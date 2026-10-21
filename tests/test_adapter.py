@@ -152,14 +152,23 @@ class TestAdapter(unittest.TestCase):
         self.assertFalse(any(fa.is_turning_op(o) for o in ops))
         letter, axis = fa.machine_rotary_axis(job)
         self.assertEqual((letter, axis.direction, axis.limits), ("A", (1.0, 0.0, 0.0), (-120.0, 120.0)))
-        stock, inputs, part_phi, notes, info = fa.build_milling_inputs(job, ops, 1.0)
-        self.assertEqual([round(i.meta["angle"], 6) for i in inputs], [-90.0, 0.0, 90.0])
+        stock, inputs, part_phi, notes, info, tools = fa.build_milling_inputs(job, ops, 1.0)
+        self.assertEqual([round(i.meta["angle"], 6) for i in inputs if not i.meta.get("indexing")], [-90.0, 0.0, 90.0])
+        # Auto: the machine's pre-rotary move (G53 G0 Z-40, machine coordinates) as a retract clearing the swing
+        names = [i.name for i in inputs][:3]
+        self.assertEqual(names, ["Adaptive (index A +0.0 to -90.0, retracted)", "Adaptive",
+                                 "Adaptive001 (index A -90.0 to +0.0, retracted)"])
+        self.assertTrue(any("pre-rotary move 'G53 G0 Z-40' is in machine coordinates" in n for n in notes))
+        self.assertGreater(stock.retract, 35.355)
+        self.assertEqual(len(tools), len(inputs))
+        _s, inputs_none, *_ = fa.build_milling_inputs(job, ops, 1.0, retract=None)
+        self.assertEqual(len(inputs_none), 5)       # no initial index without a known tool position
         self.assertIn("Adaptive002: (0.000, 1.000, -0.000), A +90.0", info[2])
         self.assertTrue(any("rotary axis A from machine 'tormach 4-axis'" in n for n in notes))
         self.assertTrue(any("Endmill: flat end, diameter 5.000, cutting length 30.000" in n for n in notes))
         self.assertEqual(part_phi.shape, stock.shape)
         # the ops' own commands, local to their work plane: the Adaptive helix starts at local (0, -1.446)
-        tip, d = inputs[0].kinematics.to_workpiece((0.0, -1.44625, 5.0, 0, 0, 0))
+        tip, d = inputs[1].kinematics.to_workpiece((0.0, -1.44625, 5.0, 0, 0, 0))
         np.testing.assert_allclose(d, [0, -1, 0], atol=1e-9)
         np.testing.assert_allclose(tip, [25.0, -30.0, -1.51050519], atol=1e-6)
         # without the machine: A along X assumed

@@ -25,10 +25,12 @@ from .view import SimScene, outline_prism
 PREFS = "User parameter:BaseApp/Preferences/Mod/CAMRotarySim"
 SPEEDS = (1, 5, 10, 25, 50)          # same steps as the CAM simulator's speed control
 SAMPLES_PER_TICK = 20                # at speed 1
+ROTARY_DEG_PER_TICK = 3              # at speed 1: rotary moves are animated
 TICK_MS = 40
 MESH_INTERVAL = 0.12                 # s between stock mesh rebuilds during playback (at least)
 HANDS = ("Right-hand", "Left-hand")
 HOLES = ("Auto", "None", "Custom")
+RETRACTS = ("Auto", "None", "Custom")
 
 
 def _icon(obj):
@@ -146,6 +148,23 @@ class TaskPanel:
         self.spin_grid.valueChanged.connect(self.mark_dirty)
         grid.addWidget(QtGui.QLabel(translate("Milling grid")), 6, 0)
         grid.addWidget(self.spin_grid, 6, 1)
+        self.combo_retract = QtGui.QComboBox()
+        for r in RETRACTS:
+            self.combo_retract.addItem(translate(r))
+        self.combo_retract.setToolTip(translate(
+            "Before the rotary axis turns between work planes. Auto: the machine's pre-rotary move (a G53 move "
+            "is shown clearing the stock's swing). None: turn with the tool where it is, which shows whether "
+            "the turning stock hits it. Custom: a Z."))
+        self.spin_retract = self._spin(-10000.0, 10000.0, 0.0, 3, 1.0)
+        self.spin_retract.setToolTip(translate("Retract Z (machine frame, work coordinates)"))
+        row_r = QtGui.QHBoxLayout()
+        for widget in (self.combo_retract, self.spin_retract):
+            signal = widget.currentIndexChanged if widget is self.combo_retract else widget.valueChanged
+            signal.connect(self.on_retract_changed)
+            row_r.addWidget(widget)
+        grid.addWidget(QtGui.QLabel(translate("Retract before indexing")), 7, 0)
+        grid.addLayout(row_r, 7, 1)
+        self.on_retract_changed()
         self.on_hole_changed()
         lay.addLayout(grid)
 
@@ -221,6 +240,15 @@ class TaskPanel:
         self.spin_hole_depth.setEnabled(custom)
         if hasattr(self, "lbl_status"):
             self.mark_dirty()
+
+    def on_retract_changed(self, *_):
+        self.spin_retract.setEnabled(self.combo_retract.currentIndex() == 2)
+        if hasattr(self, "lbl_status"):
+            self.mark_dirty()
+
+    def retract_setting(self):
+        i = self.combo_retract.currentIndex()
+        return "auto" if i == 0 else (None if i == 1 else self.spin_retract.value())
 
     def hole_setting(self):
         i = self.combo_hole.currentIndex()
@@ -360,13 +388,17 @@ class TaskPanel:
         try:
             h = self.spin_grid.value()
             self.prefs.SetFloat("MillingGrid", h)
-            stock, inputs, part_phi, notes, info = fa.build_milling_inputs(job, ops, h)
+            stock, inputs, part_phi, notes, info, tools = fa.build_milling_inputs(job, ops, h, self.retract_setting())
+            if self.combo_retract.currentIndex() == 0:   # show what Auto found
+                self.spin_retract.blockSignals(True)
+                self.spin_retract.setValue(stock.retract if stock.retract is not None else 0.0)
+                self.spin_retract.blockSignals(False)
             self.sim = Simulation(stock, inputs, step=min(0.25, h / 2))
             self.notes, self.op_info, self.part_phi = notes, info, part_phi
             self.zones, self.threads = [], []
             self.tool_meshes = {}
-            for i, op in enumerate(ops):
-                self.tool_meshes[i] = self._mill_tool_mesh(fa.tool_of(op), inputs[i].tool)
+            for i, (inp, tool) in enumerate(zip(inputs, tools)):
+                self.tool_meshes[i] = self._mill_tool_mesh(tool, inp.tool)
             if self.scene is None:
                 self.scene = SimScene(FreeCADGui.ActiveDocument.ActiveView)
                 self._hide_job(job)
@@ -511,6 +543,32 @@ class TaskPanel:
         self.sim.seek(int(self.sim.total_samples * value / 1000.0))
         self.update_all(report=False)
 
+    def _tick_samples(self):
+        """
+        Samples for one tick. A rotary move (an index between work planes)
+        is one sample per degree; it goes at ROTARY_DEG_PER_TICK x the speed,
+        so it is seen turning, and a tick stops where one begins.
+        """
+        speed = SPEEDS[self.speed_index]
+        n = speed * SAMPLES_PER_TICK
+        sim = self.sim
+        if not sim.moves or sim.done:
+            return n
+        mi = sim.move_at(sim.cursor)
+        offsets = sim._offsets
+        if self._turns(sim.moves[mi]):
+            return max(1, min(n, speed * ROTARY_DEG_PER_TICK, int(offsets[mi + 1]) - sim.cursor))
+        j = mi + 1
+        while j < len(sim.moves) and int(offsets[j]) < sim.cursor + n:
+            if self._turns(sim.moves[j]):
+                return max(1, int(offsets[j]) - sim.cursor)
+            j += 1
+        return n
+
+    @staticmethod
+    def _turns(move):
+        return any(abs(move.end[i] - move.start[i]) > 1e-9 for i in (3, 4, 5))
+
     def change_speed(self, delta):
         self.speed_index = max(0, min(len(SPEEDS) - 1, self.speed_index + delta))
         self.lbl_speed.setText("x%d" % SPEEDS[self.speed_index])
@@ -519,7 +577,7 @@ class TaskPanel:
         if self.sim is None:
             self.timer.stop()
             return
-        self.sim.advance(SPEEDS[self.speed_index] * SAMPLES_PER_TICK)
+        self.sim.advance(self._tick_samples())
         if self.sim.done:
             self.pause()
             return

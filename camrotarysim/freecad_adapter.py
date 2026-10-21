@@ -354,16 +354,37 @@ def machine_rotary_axis(job):
                               {"allow_flip": getattr(ax, "allow_flip", None)})
 
 
+def machine_properties(job):
+    """The post-processor properties of the Job's machine file (e.g. pre_rotary_move), or {}."""
+    import json
+    name = (getattr(job, "Machine", "") or "").lower()
+    if not name:
+        return {}
+    try:
+        from Machine.models.machine import MachineFactory
+        for n, path in MachineFactory.list_configuration_files():
+            if n.lower() == name and path is not None:
+                with open(path) as f:
+                    data = json.load(f)
+                return dict((data.get("postprocessor") or {}).get("properties") or {})
+    except Exception:
+        pass
+    return {}
+
+
 def shape_triangles(shape, deflection=0.05):
     pts, tris = shape.tessellate(deflection)
     P = np.array([(p.x, p.y, p.z) for p in pts])
     return P[np.asarray(tris, dtype=int)] if len(tris) else np.zeros((0, 3, 3))
 
 
-def build_milling_inputs(job, ops, h=0.5):
+def build_milling_inputs(job, ops, h=0.5, retract="auto"):
     """
-    (VoxelStock, [OpInput], part SDF grid or None, notes, per-op info lines)
-    for milling ops. Commands are the ops' own (local to their work plane);
+    (VoxelStock, [OpInput], part SDF grid or None, notes, per-op info lines,
+    [FreeCAD tool per input]) for milling ops, with the indexing moves
+    between ops on different work planes (core.indexing). retract: "auto"
+    (the machine's pre-rotary move), None (turn the rotary axis with the
+    tool where it is), or a machine Z. Commands are the ops' own (local to their work plane);
     each op's MillingKinematics carries its frame, so arcs stay arcs in
     their plane: CAM's applyPlacementToPath leaves arcs it tilts out of XY
     as they are, which is wrong for work planes on the sides.
@@ -389,7 +410,7 @@ def build_milling_inputs(job, ops, h=0.5):
     else:
         tris = shape_triangles(stock_shape)
         stock = VoxelStock.from_sdf(lo, hi, h, lambda g: mesh_sdf(g.lo, g.h, g.shape, tris), axis)
-    inputs, cache = [], {}
+    inputs, cache, tools = [], {}, {}
     for op in ops:
         tool = tool_of(op)
         if tool is None:
@@ -414,8 +435,24 @@ def build_milling_inputs(job, ops, h=0.5):
         cmds = [(c.Name, dict(c.Parameters)) for c in op.Path.Commands]
         inputs.append(OpInput(op.Label, cmds, cache[tool.Name], kinematics=MillingKinematics(axis, (R, t), letter),
                               meta={"angle": angle, "letter": letter}))
+        tools[id(inputs[-1].tool)] = tool
+    from .core.indexing import describe_retract, swing_radius, with_indexing
+    if retract == "auto":
+        sheet = getattr(job, "SetupSheet", None)
+        clearance = _value(getattr(sheet, "ClearanceHeightOffset", 5.0)) if sheet is not None else 5.0
+        z, note = describe_retract(machine_properties(job).get("pre_rotary_move", ""),
+                                   swing_radius(stock, axis), clearance)
+        notes.append(note)
+    elif retract is None:
+        z = None
+        notes.append("no retract before indexing (set in the panel): the rotary axis turns with the tool where it is")
+    else:
+        z = float(retract)
+        notes.append("retract to Z %.3f before indexing (set in the panel)" % z)
+    inputs = with_indexing(inputs, z)
+    stock.retract = z
     model = model_shape(job)
     part_phi = None
     if model is not None:
         part_phi = mesh_sdf(stock.lo, stock.h, stock.shape, shape_triangles(model))
-    return stock, inputs, part_phi, notes, info
+    return stock, inputs, part_phi, notes, info, [tools.get(id(i.tool)) for i in inputs]

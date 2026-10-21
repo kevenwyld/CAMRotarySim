@@ -90,7 +90,7 @@ class Move:
         start = np.asarray(self.start, dtype=float)
         end = np.asarray(self.end, dtype=float)
         rot = np.abs(end[3:] - start[3:]).max()
-        n = max(1, int(math.ceil(self.linear_length / step)), int(math.ceil(rot / angle_step)))
+        n = max(1, int(math.ceil(self.linear_length / step - 1e-9)), int(math.ceil(rot / angle_step - 1e-9)))
         t = np.arange(1, n + 1, dtype=float) / n
         pts = start[None, :] + t[:, None] * (end - start)[None, :]
         if self.kind == ARC:

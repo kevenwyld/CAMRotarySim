@@ -222,8 +222,12 @@ class MillingKinematics:
         if not inside.any():
             return None
         removed = float(np.max(np.minimum(block[inside], -cut[inside])))
+        h = stock.h
+        before = np.clip(block / h + 0.5, 0.0, 1.0).sum()
         np.minimum(block, cut, out=block)
-        return Contact(removed, 0.0)
+        c = Contact(removed, 0.0)
+        c.volume = float(before - np.clip(block / h + 0.5, 0.0, 1.0).sum()) * h ** 3
+        return c
 
 
 def placement_frame(position, quaternion):
@@ -254,7 +258,7 @@ def needed_angle(normal, axis):
         return 0.0, abs(off)
     a = np_ / np.linalg.norm(np_)
     b = nz / np.linalg.norm(nz)
-    angle = math.degrees(math.atan2(float(np.cross(a, b) @ k), float(a @ b)))
+    angle = round(math.degrees(math.atan2(float(np.cross(a, b) @ k), float(a @ b))), 9) + 0.0
     reached = rotation_matrix(k, angle) @ n
     return angle, float(np.linalg.norm(reached - np.array([0.0, 0.0, 1.0])))
 

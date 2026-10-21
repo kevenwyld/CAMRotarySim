@@ -92,6 +92,20 @@ a command turns the workpiece: the tool is placed at R(axis, −angle) × world
 plane's normal to +Z. The 3D view turns the part by that angle, with the tool
 upright, as on the machine. Compare these angles with the posted program.
 
+**Indexing.** Between ops whose angles differ, the simulator runs what the
+posted program runs: the pre-rotary move, then the rotary axis turning as a
+move, then the next op from where the tool is. The tool's position is carried
+through the machine frame, since each op's coordinates are in its own plane.
+Playback turns the part at 3° per tick × the speed, so the rotation is seen.
+The **Retract before indexing** setting has three choices:
+- **Auto:** the machine's pre-rotary move. A G53 move is in machine
+  coordinates, which can't be placed without the work offset, so it is shown
+  as a retract to the stock's swing radius about the axis plus the
+  SetupSheet's clearance offset, and the report says so.
+- **None:** the axis turns with the tool where it is. If the turning stock
+  sweeps through the tool, that is cut and reported.
+- **Custom:** a Z.
+
 **Rotary axis.** Taken from the Job's machine through CAM's
 `MachineFactory`; without one, A along X through the origin is assumed.
 
