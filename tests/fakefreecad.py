@@ -174,11 +174,12 @@ class Node:
 def make_coin():
     coin = types.ModuleType("pivy.coin")
     for n in ("SoSeparator", "SoSwitch", "SoMaterial", "SoMaterialBinding", "SoCoordinate3",
-              "SoIndexedFaceSet", "SoTransform", "SoDrawStyle", "SoLineSet", "SoBaseColor"):
+              "SoIndexedFaceSet", "SoTransform", "SoDrawStyle", "SoLineSet", "SoBaseColor", "SoRotation"):
         setattr(coin, n, type(n, (Node,), {}))
     coin.SoShapeHints = type("SoShapeHints", (Node,), {"COUNTERCLOCKWISE": 1, "SOLID": 1, "UNKNOWN_ORDERING": 0})
     coin.SoLightModel = type("SoLightModel", (Node,), {"BASE_COLOR": 0})
     coin.SoMaterialBinding = type("SoMaterialBinding", (Node,), {"PER_VERTEX_INDEXED": 5, "PER_PART": 1})
+    coin.SbVec3f = lambda *v: tuple(v)
     coin.SO_SWITCH_ALL = -3
     coin.SO_SWITCH_NONE = -1
     return coin

@@ -14,7 +14,7 @@ def axis_offset(part_pos, part_neg, min_radius=1.0):
     return float(np.median(part_pos[m] - part_neg[m]) / 2.0)
 
 
-def format_report(sim, result=None, part_pos=None, part_neg=None, max_lines=8):
+def format_report(sim, result=None, part_pos=None, part_neg=None, max_lines=8, threads=None):
     out = []
     state = "complete" if sim.done else "%.0f%% simulated" % (100 * sim.progress)
     out.append("Simulation %s: %d moves, %d samples." % (state, len(sim.moves), sim.total_samples))
@@ -42,6 +42,13 @@ def format_report(sim, result=None, part_pos=None, part_neg=None, max_lines=8):
             off = axis_offset(part_pos, part_neg)
             if off is not None and abs(off) > 1e-3:
                 out.append("  Note: the part's axis is offset %+.4f mm in X from the spindle axis." % off)
+
+    if threads:
+        from .thread_check import format_thread
+        out.append("")
+        out.append("Threads (measured on the simulated stock):")
+        for t in threads:
+            out += format_thread(t)
 
     out.append("")
     if sim.events:

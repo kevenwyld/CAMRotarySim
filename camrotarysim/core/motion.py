@@ -35,6 +35,7 @@ OFFSET_WORD = {0: "I", 1: "J", 2: "K"}
 RAPID = "rapid"
 FEED = "feed"
 ARC = "arc"
+THREAD = "thread"  # G33 spindle-synchronized move
 
 
 def normalise_name(name):
@@ -67,6 +68,9 @@ class Move:
     ccw: bool = False
     sweep: float = 0.0  # signed arc sweep in radians (positive = CCW)
     radius: float = 0.0
+    pitch: float = 0.0        # G33 K: distance per spindle revolution along the move
+    start_angle: float = 0.0  # G33 D: degrees past the spindle index at the start
+    sync_retract: bool = False  # a rapid straight after a G33 (see Simulation)
 
     @property
     def linear_length(self):
@@ -192,10 +196,12 @@ class MotionInterpreter:
                 continue
             if n in self.IGNORED or n[0] in "MTSFN":
                 continue
-            if n in ("G0", "G1", "G2", "G3"):
+            if n in ("G0", "G1", "G2", "G3", "G33"):
                 st.motion = n
-            elif n.startswith("G") and n not in ("G0", "G1", "G2", "G3"):
-                if n in ("G81", "G82", "G83", "G73", "G84", "G85"):
+            elif n.startswith("G"):
+                if n == "G76":
+                    self._diag("unsupported", op, index, "G76 threading cycle is not simulated yet")
+                elif n in ("G81", "G82", "G83", "G73", "G84", "G85"):
                     self._diag("unsupported", op, index, "canned cycle %s is not simulated" % n)
                 else:
                     self._diag("unsupported", op, index, "command %s is ignored" % n)
@@ -215,13 +221,23 @@ class MotionInterpreter:
                 if start[i] is None:
                     start[i] = end[i]
             start_t, end_t = tuple(start), tuple(end)
-            if start_t == end_t and n in ("G0", "G1"):
+            if start_t == end_t and n in ("G0", "G1", "G33"):
+                continue
+            if n == "G33":
+                k = float(params.get("K", 0.0))
+                if k <= 0:
+                    self._diag("thread", op, index, "G33 without a positive K (distance per revolution)")
+                    continue
+                moves.append(Move(THREAD, start_t, end_t, op, index, None, pitch=k,
+                                  start_angle=abs(float(params.get("D", 0.0)))))
                 continue
             if n != "G0" and not st.feed:
                 self._diag("feed", op, index, "%s with zero or missing feed rate (F%s)" % (n, st.feed))
             if n in ("G0", "G1"):
-                moves.append(Move(RAPID if n == "G0" else FEED, start_t, end_t, op, index,
-                                  None if n == "G0" else st.feed))
+                m = Move(RAPID if n == "G0" else FEED, start_t, end_t, op, index,
+                         None if n == "G0" else st.feed)
+                m.sync_retract = n == "G0" and bool(moves) and moves[-1].kind == THREAD
+                moves.append(m)
                 continue
             plane = PLANES[st.plane]
             ccw = n == "G3"

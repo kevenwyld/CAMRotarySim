@@ -7,20 +7,27 @@ import math
 
 import numpy as np
 
-from .compare import GOUGE, UNCUT, UNREACHABLE
+from .compare import GOUGE, THREAD, UNCUT, UNREACHABLE
 
 # colours follow the new CAM simulator where it has one (stock/cut colours)
 STOCK_COLOUR = (0.5, 0.55, 0.9)
 CUT_COLOUR = (0.5, 0.84, 0.73)
+THREAD_COLOURS = {"ok": (0.5, 0.84, 0.73), "shallow": (0.95, 0.7, 0.1), "deep": (0.9, 0.15, 0.15),
+                  "": (0.55, 0.75, 0.85)}
 CLASS_COLOURS = {
     GOUGE: (0.9, 0.15, 0.15),
     UNCUT: (0.95, 0.7, 0.1),
     UNREACHABLE: (0.75, 0.3, 0.85),
+    THREAD: THREAD_COLOURS[""],
 }
 
 
-def column_colours(stock, classes=None, cut_tol=1e-6):
-    """RGB per column: stock colour, cut colour where material was removed, class colours."""
+def column_colours(stock, classes=None, cut_tol=1e-6, thread_verdicts=()):
+    """
+    RGB per column: stock colour, cut colour where material was removed,
+    class colours; thread zones by their check's verdict
+    (thread_verdicts: ((z0, z1), verdict) pairs).
+    """
     prof = stock.profile()
     cut = prof < stock.R0.max(axis=0) - cut_tol
     col = np.tile(np.asarray(STOCK_COLOUR), (len(prof), 1))
@@ -28,6 +35,8 @@ def column_colours(stock, classes=None, cut_tol=1e-6):
     if classes is not None:
         for c, rgb in CLASS_COLOURS.items():
             col[classes == c] = rgb
+    for (z0, z1), verdict in thread_verdicts:
+        col[(stock.s >= z0) & (stock.s <= z1)] = THREAD_COLOURS.get(verdict, THREAD_COLOURS[""])
     return col
 
 
@@ -56,7 +65,14 @@ def revolve(stock, colours=None, segments=72, tol=1e-4):
         ring = np.tile(prof[cols][None, :], (segments, 1))
         theta = np.arange(segments) * (2 * math.pi / segments)
     else:
-        cols = np.arange(stock.n_s)
+        # keep columns that vary around the axis (and their neighbours), plus
+        # the axisymmetric outline's corners
+        prof = stock.R.max(axis=0)
+        varies = np.ptp(stock.R, axis=0) > tol
+        varies = varies | np.roll(varies, 1) | np.roll(varies, -1)
+        keep = np.zeros(stock.n_s, dtype=bool)
+        keep[keep_columns(prof, colours, tol)] = True
+        cols = np.nonzero(keep | varies)[0]
         ring = stock.R[:, cols]
         theta = stock.theta
         segments = stock.n_theta

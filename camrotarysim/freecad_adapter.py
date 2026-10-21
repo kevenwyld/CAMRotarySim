@@ -20,7 +20,10 @@ from PathScripts import PathUtils
 from .core import compare
 from .core.simulation import OpInput
 from .core.stock import RotaryStock
-from .core.tool import ToolOutline
+from .core.tool import REF_IMAGINARY_TIP, REF_ORIGIN, ToolOutline
+
+# Thread op properties passed to the thread check (TurningAddon PathTurnThread)
+THREAD_PROPS = ("Pitch", "ThreadDepth", "ThreadDiameter", "ThreadReport", "ThreadStandard", "ThreadSize")
 
 Y_AXIS = FreeCAD.Vector(0, 1, 0)
 
@@ -71,14 +74,27 @@ def edge_dicts(edges, deflection=0.005):
     return out
 
 
+def tool_reference(tool):
+    """
+    Which point of the tool shape the path is programmed to: the imaginary
+    tip for Isoshape tools, the shape origin for the TurningAddon's other
+    shapes (threading, grooving, full radius).
+    """
+    shape_id = str(getattr(tool, "ShapeID", "") or "").lower()
+    if shape_id == "isoshape" or (not shape_id and hasattr(tool, "EdgeLength") and hasattr(tool, "Rotation")):
+        return REF_IMAGINARY_TIP
+    return REF_ORIGIN
+
+
 def tool_outline(tool):
     """
     The insert outline from the tool's own solid: section in the XZ plane at
     mid thickness, in the tool shape's coordinates (Placement reset, as
-    SimulatorGL does). Falls back to the Isoshape parameters.
-    Returns (ToolOutline, note).
+    SimulatorGL does). Falls back to the shape parameters (Isoshape,
+    Threading). Returns (ToolOutline, note).
     """
     tip_r = _value(tool.TipRadius) if hasattr(tool, "TipRadius") else None
+    reference = tool_reference(tool)
     note = ""
     shape = getattr(tool, "Shape", None)
     if shape is not None and not shape.isNull():
@@ -89,7 +105,8 @@ def tool_outline(tool):
             wires = shape.slice(Y_AXIS, (bb.YMin + bb.YMax) / 2.0)
             edges = edge_dicts([e for w in wires for e in w.Edges])
             if edges:
-                return ToolOutline.from_section(edges, tip_r, "tool shape of %s" % tool.Label), note
+                return ToolOutline.from_section(edges, tip_r, "tool shape of %s" % tool.Label,
+                                                reference=reference), note
             note = "tool shape has no section in the XZ plane"
         except Exception as e:  # fall back below
             note = "tool shape section failed: %s" % e
@@ -97,6 +114,9 @@ def tool_outline(tool):
         t = ToolOutline.from_iso(_value(tool.EdgeLength), _value(tool.TipAngle),
                                  _value(tool.TipRadius), _value(tool.Rotation))
         return t, (note + "; " if note else "") + "using Isoshape parameters"
+    if all(hasattr(tool, p) for p in ("ProfileAngle", "TipRadius", "Width")):
+        t = ToolOutline.from_threading(_value(tool.ProfileAngle), _value(tool.TipRadius), _value(tool.Width))
+        return t, (note + "; " if note else "") + "using Threading parameters"
     raise ValueError("cannot build an outline for tool %s (%s)" % (tool.Label, note or "no shape"))
 
 
@@ -127,7 +147,30 @@ def build_stock(job, ds):
     return stock
 
 
-def build_inputs(job, ops, ds):
+def spindle_sense(op, forward_right_hand=True):
+    """
+    +1 / -1 for OpInput.spindle from the tool controller's SpindleDir.
+    Path commands don't fix the thread hand: forward_right_hand says what a
+    Forward spindle cuts when the tool feeds toward -Z (+1: right-hand).
+    """
+    tc = PathDressup.toolController(op)
+    forward = 1 if forward_right_hand else -1
+    return -forward if str(getattr(tc, "SpindleDir", "Forward")) == "Reverse" else forward
+
+
+def op_meta(op):
+    meta = {}
+    for p in THREAD_PROPS:
+        if hasattr(op, p):
+            v = getattr(op, p)
+            meta[p] = v if isinstance(v, str) else _value(v)
+    tc = PathDressup.toolController(op)
+    if tc is not None and hasattr(tc, "SpindleDir"):
+        meta["SpindleDir"] = str(tc.SpindleDir)
+    return meta
+
+
+def build_inputs(job, ops, ds, forward_right_hand=True):
     """(stock, [OpInput], part polylines, notes) for the selected ops."""
     stock = build_stock(job, ds)
     inputs, notes, cache = [], [], {}
@@ -140,7 +183,11 @@ def build_inputs(job, ops, ds):
             outline, note = tool_outline(tool)
             cache[tool.Name] = outline
             notes.append("%s: outline from %s%s" % (tool.Label, outline.source, " (%s)" % note if note else ""))
-        inputs.append(OpInput(op.Label, op_commands(op), cache[tool.Name]))
+        inputs.append(OpInput(op.Label, op_commands(op), cache[tool.Name],
+                              spindle=spindle_sense(op, forward_right_hand), meta=op_meta(op)))
+        if str(inputs[-1].meta.get("SpindleDir", "")) == "None" and any(
+                c[0].upper().startswith("G33") for c in inputs[-1].commands):
+            notes.append("%s: spindle direction None on a thread op; simulated as Forward" % op.Label)
     model = model_shape(job)
     polylines = section_polylines(model) if model is not None else []
     return stock, inputs, polylines, notes

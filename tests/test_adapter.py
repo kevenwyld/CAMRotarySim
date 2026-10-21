@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(HERE, ".."))
 sys.path.insert(0, HERE)
 
 import fakefreecad  # noqa: E402
-from fakejob import make_doc  # noqa: E402
+from fakejob import make_doc, make_thread_doc  # noqa: E402
 
 
 class TestAdapter(unittest.TestCase):
@@ -62,6 +62,34 @@ class TestAdapter(unittest.TestCase):
     def test_no_outline_possible(self):
         with self.assertRaises(ValueError):
             self.fa.tool_outline(types.SimpleNamespace(Label="EM", Shape=None))
+
+    def test_thread_job_inputs(self):
+        doc, job, op, tc = make_thread_doc(fakefreecad)
+        fa = self.fa
+        self.assertTrue(fa.is_turning_op(op))
+        self.assertEqual(fa.tool_reference(tc.Tool), "origin")
+        self.assertEqual(fa.tool_reference(make_doc(fakefreecad)[1].Operations.OutList[0].ToolController.Tool),
+                         "imaginary_tip")
+        stock, inputs, polylines, notes = fa.build_inputs(job, [op], 0.05)
+        t = inputs[0].tool
+        # threading tools are programmed to the V's sharp point: the shape origin
+        self.assertEqual(t.control_in_shape, (0.0, 0.0))
+        self.assertAlmostEqual(t.lower(0.0), 0.05, 4)  # the tip arc's bottom is a tip radius above it
+        self.assertEqual(inputs[0].spindle, 1)
+        self.assertAlmostEqual(inputs[0].meta["ThreadDepth"], 1.12933, 4)
+        self.assertIn("Pitch diameter 10.679-10.829", inputs[0].meta["ThreadReport"])
+        tc.SpindleDir = "Reverse"
+        self.assertEqual(fa.spindle_sense(op), -1)
+        self.assertEqual(fa.spindle_sense(op, forward_right_hand=False), 1)
+        tc.SpindleDir = "Forward"
+
+    def test_threading_fallback_to_parameters(self):
+        q = lambda v: types.SimpleNamespace(Value=v)  # noqa: E731
+        tool = types.SimpleNamespace(Label="Th", Shape=None, ShapeID="threading", ProfileAngle=q(60.0),
+                                     TipRadius=q(0.05), Width=q(6.0))
+        outline, note = self.fa.tool_outline(tool)
+        self.assertIn("Threading parameters", note)
+        self.assertEqual(outline.control_in_shape, (0.0, 0.0))
 
 
 if __name__ == "__main__":

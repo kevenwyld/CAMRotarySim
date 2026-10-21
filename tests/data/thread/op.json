@@ -1,0 +1,9 @@
+{
+ "source": "threading_test.FCStd: TurnThread properties",
+ "Pitch": 1.75,
+ "ThreadDepth": 1.1293327474836623,
+ "ThreadDiameter": 12.002318744967326,
+ "Infeed": "Modified flank (29.5)",
+ "ThreadReport": "Metric coarse M12 external, class 6g\nTurn the major diameter to 11.701-11.966 first: the selected 12.002 is 0.036 over\nPitch diameter 10.679-10.829, cut to 10.754\nOver three best-size wires (dia 1.0104): 12.195-12.345\nRoot diameter 9.744, 1.129 deep from the selected diameter\n8 passes + 1 spring: first 0.282, last 0.096\nZ 0.000 to -56.196 (56.196 long); each pass starts 5.250 in front",
+ "SpindleDir": "Forward"
+}

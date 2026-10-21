@@ -8,10 +8,12 @@ seeking (backwards too, via per-move snapshots) and reset.
 from dataclasses import dataclass
 from typing import List, Sequence
 
+import math
+
 import numpy as np
 
 from .kinematics import TurningKinematics
-from .motion import RAPID, Diagnostic, MotionInterpreter, MotionState
+from .motion import RAPID, THREAD, Diagnostic, MotionInterpreter, MotionState
 
 
 @dataclass
@@ -22,6 +24,10 @@ class OpInput:
     commands: Sequence  # (name, params) pairs
     tool: object        # ToolOutline for turning
     kinematics: object = None
+    # spindle sense for G33: +1 = the workpiece turns counter-clockwise seen
+    # from +Z (a right-hand thread when the tool feeds toward -Z), -1 = clockwise
+    spindle: int = 1
+    meta: dict = None   # op data for reports (e.g. thread properties)
 
 
 @dataclass
@@ -37,7 +43,8 @@ class Event:
 
 class Simulation:
     def __init__(self, stock, ops: List[OpInput], step=0.05, angle_step=1.0,
-                 rapid_tol=0.001, collision_tol=0.001, kinematics=None, parting_min_radius=1.0):
+                 rapid_tol=0.001, collision_tol=0.001, kinematics=None, parting_min_radius=1.0,
+                 thread_angles=120, snapshot_budget=96 * 2 ** 20):
         self.stock = stock
         self.ops = ops
         self.step = float(step)
@@ -53,7 +60,16 @@ class Simulation:
             self.moves.extend(interp.run(op.commands, i))
         self.diagnostics: List[Diagnostic] = interp.diagnostics
 
+        self.thread_angles = int(thread_angles)
+        self.snapshot_budget = int(snapshot_budget)
         self._samples = [m.sample(self.step, self.angle_step) for m in self.moves]
+        self._thread_events = {}
+        self._alpha_after = []
+        alpha = 0.0
+        for mi, m in enumerate(self.moves):
+            if m.kind == THREAD:
+                alpha = self._spindle_angle(m, m.linear_length)
+            self._alpha_after.append(alpha)
         counts = np.array([len(s) for s in self._samples], dtype=np.int64)
         self._offsets = np.concatenate([[0], np.cumsum(counts)])
         self.total_samples = int(self._offsets[-1])
@@ -66,6 +82,8 @@ class Simulation:
         self.stock.restore(self._initial)
         self.cursor = 0              # samples processed so far
         self._move_snaps = {}        # move index -> (stock snapshot, events count) at move end
+        self._snap_stride = 1
+        self._snap_bytes = 0
         self.events: List[Event] = []
         self._move_events = {}
         self.position = self.moves[0].start if self.moves else None
@@ -135,13 +153,88 @@ class Simulation:
                 self.events = self.events[:n_events]
                 self.cursor = int(self._offsets[mi + 1])
                 self._move_snaps = {k: v for k, v in self._move_snaps.items() if k <= mi}
+                self._snap_bytes = sum(v[0].nbytes for v in self._move_snaps.values())
                 self._move_events = {}
                 self.position = self.moves[mi].end
             else:
                 self.reset()
         self.advance(sample_index - self.cursor)
 
+    # ------------------------------------------------------------ threading
+    def _spindle_angle(self, move, d):
+        """Workpiece angle (rad) a distance d along a G33 move: the move starts on the index."""
+        sense = self.ops[move.op].spindle or 1
+        return sense * (math.radians(move.start_angle) + 2 * math.pi * d / move.pitch)
+
+    @property
+    def spindle_angle(self):
+        """Current workpiece angle about the axis (rad), for display."""
+        if not self.moves or self.cursor == 0:
+            return 0.0
+        mi = min(self.move_at(self.cursor - 1), len(self.moves) - 1)
+        m = self.moves[mi]
+        done = self.cursor - int(self._offsets[mi])
+        if m.kind == THREAD and done < len(self._samples[mi]):
+            return self._spindle_angle(m, m.linear_length * done / len(self._samples[mi]))
+        return self._alpha_after[mi]
+
+    def _events(self, mi, move):
+        """
+        Where the tool passes each workpiece angle during a G33 move:
+        (distances along the move, angle indices), sorted by distance.
+        The tool sits at world angle 0, so it is at workpiece angle -alpha.
+        """
+        ev = self._thread_events.get(mi)
+        if ev is not None:
+            return ev
+        n = self.stock.n_theta
+        sense = self.ops[move.op].spindle or 1
+        L, K = move.linear_length, move.pitch
+        theta = np.arange(n) / n  # in turns
+        d0 = K * np.mod(-sense * theta - move.start_angle / 360.0, 1.0)
+        reps = int(math.floor(L / K)) + 1
+        d = (d0[None, :] + K * np.arange(reps)[:, None]).ravel()
+        idx = np.tile(np.arange(n), reps)
+        keep = d <= L + 1e-12
+        d, idx = d[keep], idx[keep]
+        order = np.argsort(d, kind="stable")
+        ev = (d[order], idx[order])
+        self._thread_events[mi] = ev
+        return ev
+
+    def _run_thread(self, mi, move, first, last):
+        if self.stock.n_theta == 1:
+            self.stock.set_angles(self.thread_angles)
+            self._thread_events.clear()
+        op = self.ops[move.op]
+        kin = self._kinematics(move.op)
+        d, idx = self._events(mi, move)
+        n = len(self._samples[mi])
+        L = move.linear_length
+        lo = L * first / n if first else -1.0
+        hi = L * last / n
+        a, b = np.searchsorted(d, lo, "right"), np.searchsorted(d, hi, "right")
+        start = np.asarray(move.start, dtype=float)
+        delta = np.asarray(move.end, dtype=float) - start
+        for k in range(a, b):
+            pos = start + delta * (d[k] / L)
+            kin.apply_at_angle(self.stock, op.tool, pos, int(idx[k]))
+        self.position = tuple(self._samples[mi][last - 1])
+
+    def thread_moves(self):
+        return [m for m in self.moves if m.kind == THREAD]
+
+    # ------------------------------------------------------------ samples
     def _run_samples(self, mi, move, first, last):
+        if move.kind == THREAD:
+            self._run_thread(mi, move, first, last)
+            return
+        if move.sync_retract:
+            # the rapid out after a G33 takes a fraction of a turn; treated
+            # as instant, it cuts nothing (as a turning move it would cut a
+            # full ring at the end of the thread on every pass)
+            self.position = tuple(self._samples[mi][last - 1])
+            return
         op = self.ops[move.op]
         kin = self._kinematics(move.op)
         pts = self._samples[mi][first:last]
@@ -200,7 +293,22 @@ class Simulation:
                         "parted", move.op, self.ops[move.op].name, move.index, tuple(move.end),
                         float(self.stock.s[j]),
                         "stock parted at Z %.3f (material on both sides)" % self.stock.s[j]))
-        self._move_snaps[mi] = (self.stock.snapshot(), len(self.events))
+        self._store_snapshot(mi)
+
+    def _store_snapshot(self, mi):
+        """Snapshot at the end of move mi, thinned out to stay within the memory budget."""
+        if mi % self._snap_stride:
+            return
+        snap = self.stock.snapshot()
+        self._move_snaps[mi] = (snap, len(self.events))
+        self._snap_bytes += snap.nbytes
+        while self._snap_bytes > self.snapshot_budget and len(self._move_snaps) > 1:
+            self._snap_stride *= 2
+            keep = {k: v for k, v in self._move_snaps.items() if k % self._snap_stride == 0}
+            if len(keep) == len(self._move_snaps):
+                break
+            self._move_snaps = keep
+            self._snap_bytes = sum(v[0].nbytes for v in keep.values())
 
     # ------------------------------------------------------------ helpers
     def path_polylines(self, step=None):

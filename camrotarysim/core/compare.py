@@ -20,8 +20,8 @@ from typing import List
 
 import numpy as np
 
-OK, GOUGE, UNCUT, UNREACHABLE = 0, 1, 2, 3
-CLASS_NAMES = {OK: "ok", GOUGE: "gouge", UNCUT: "uncut", UNREACHABLE: "unreachable"}
+OK, GOUGE, UNCUT, UNREACHABLE, THREAD = 0, 1, 2, 3, 4
+CLASS_NAMES = {OK: "ok", GOUGE: "gouge", UNCUT: "uncut", UNREACHABLE: "unreachable", THREAD: "thread"}
 
 
 def bulge_segments_to_polyline(segments, ccw_positive=True, max_seg_angle=2.0):
@@ -152,7 +152,12 @@ class CompareResult:
         return min(r, key=lambda x: x.worst) if kind == "gouge" else max(r, key=lambda x: x.worst)
 
 
-def compare(stock_R, part_R, s, gouge_tol=0.01, uncut_tol=0.05, reachable=None):
+def compare(stock_R, part_R, s, gouge_tol=0.01, uncut_tol=0.05, reachable=None, thread_zones=()):
+    """
+    thread_zones: (z0, z1) ranges cut by threading; they are classed THREAD
+    and left out of the gouge/uncut check (the model usually shows a thread
+    as a plain cylinder); thread_check measures them instead.
+    """
     stock_R = np.asarray(stock_R, dtype=float)
     part_R = np.asarray(part_R, dtype=float)
     dev = stock_R - part_R
@@ -162,6 +167,9 @@ def compare(stock_R, part_R, s, gouge_tol=0.01, uncut_tol=0.05, reachable=None):
     cls[left] = UNCUT
     if reachable is not None:
         cls[left & ((np.asarray(reachable) - part_R) > uncut_tol)] = UNREACHABLE
+    s = np.asarray(s)
+    for z0, z1 in thread_zones:
+        cls[(s >= z0) & (s <= z1)] = THREAD
     ranges = []
     j = 0
     n = len(cls)
@@ -170,7 +178,7 @@ def compare(stock_R, part_R, s, gouge_tol=0.01, uncut_tol=0.05, reachable=None):
         k = j
         while k + 1 < n and cls[k + 1] == c:
             k += 1
-        if c != OK:
+        if c not in (OK, THREAD):
             seg = dev[j:k + 1]
             w = int(np.argmin(seg)) if c == GOUGE else int(np.argmax(seg))
             ranges.append(Range(CLASS_NAMES[c], float(s[j]), float(s[k]), float(seg[w]), float(s[j + w])))

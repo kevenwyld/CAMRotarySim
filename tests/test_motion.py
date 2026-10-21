@@ -97,6 +97,22 @@ class TestMotion(unittest.TestCase):
         pts = moves[-1].sample(1.0, angle_step=1.0)
         self.assertEqual(len(pts), 90)
 
+    def test_g33_thread_moves(self):
+        moves, diags = run([("G18", {}), ("G0", {"X": 7.0, "Z": 5.0}), ("G0", {"X": 5.7}),
+                            ("G33", {"X": 5.7, "Z": -20.0, "K": 1.75}),
+                            ("G1", {"X": 5.7, "Z": -20.0, "F": 1.0}),   # the addon's zero-length display move
+                            ("G0", {"X": 7.0}), ("G33", {"Z": -30.0, "K": 2.0, "D": -90.0}),
+                            ("G33", {"Z": -40.0}), ("G76", {"P": 1.5})])
+        kinds = [m.kind for m in moves]
+        self.assertEqual(kinds, ["rapid", "thread", "rapid", "thread"])
+        self.assertEqual(moves[1].pitch, 1.75)
+        self.assertTrue(moves[2].sync_retract)
+        self.assertFalse(moves[0].sync_retract)
+        self.assertEqual(moves[3].start_angle, 90.0)  # D's magnitude, as LinuxCNC uses it
+        msgs = [d.message for d in diags]
+        self.assertTrue(any("positive K" in m for m in msgs))
+        self.assertTrue(any("G76" in m for m in msgs))
+
     def test_parse_nc_text(self):
         c = parse_gcode_text("G18\nG0 F5.000000 X1.0 Z2.0\n(comment)\nG3 F5 I-1 K0 X0 Z1\n")
         self.assertEqual(c[0], ("G18", {}))

@@ -7,8 +7,17 @@ point, the point the path is programmed to. For the TurningAddon ops that
 is the insert's imaginary tip: the nose centre is at (x + r, z + r).
 
 The outline normally comes from the tool solid of the op's ToolController
-(sectioned in the XZ plane by the FreeCAD adapter). from_iso() builds the
-same outline from the Isoshape parameters, as a fallback and for tests.
+(sectioned in the XZ plane by the FreeCAD adapter). from_iso() and
+from_threading() build it from the shape parameters, as a fallback and
+for tests.
+
+Control point by shape (TurningAddon TurnToolShapes.py and shape files):
+- Isoshape: the shape origin is the sharp corner; paths are programmed to
+  the imaginary tip, the nose centre minus (r, r) (REF_IMAGINARY_TIP);
+- Threading, Grooving, FullRadius: the shape origin is the point the path
+  is programmed to (REF_ORIGIN): the profile's sharp point for threading,
+  the edge's lowest point at the chuck-side flank for grooving and full
+  radius blades.
 
 Isoshape conventions (checked against isoshape.fcstd, whose sketch binds
 TipAngle, -Rotation, EdgeLength and TipRadius, and against
@@ -23,6 +32,9 @@ liblathe Tool.get_tool_cutting_angle()):
 import math
 
 import numpy as np
+
+REF_IMAGINARY_TIP = "imaginary_tip"
+REF_ORIGIN = "origin"
 
 
 def _polygon_area(p):
@@ -87,12 +99,14 @@ class ToolOutline:
 
     # ------------------------------------------------------------------ build
     @classmethod
-    def from_section(cls, edges, tip_radius=None, source="tool shape", tol=1e-4):
+    def from_section(cls, edges, tip_radius=None, source="tool shape", tol=1e-4,
+                     reference=REF_IMAGINARY_TIP):
         """
         Build from section edges of the tool solid. edges: list of dicts with
         'kind' ('line' | 'arc' | ...), 'points' [(x, z), ...] and, for arcs,
-        'centre' (x, z) and 'radius'. Coordinates are the tool shape's own
-        (origin = sharp corner of the active tip for Isoshape tools).
+        'centre' (x, z) and 'radius'. Coordinates are the tool shape's own.
+        reference: REF_IMAGINARY_TIP (Isoshape) or REF_ORIGIN (the shape
+        origin is the control point).
         """
         loops = chain_edges(edges, tol)
         if not loops:
@@ -108,6 +122,10 @@ class ToolOutline:
                 cand = [a for a in arcs if abs(a["radius"] - tip_radius) <= max(1e-3, 0.01 * tip_radius)]
                 arcs = cand or arcs
             nose = min(arcs, key=lambda a: math.hypot(*a["centre"]))
+        if reference == REF_ORIGIN:
+            if nose is not None:
+                return cls(loop, (0.0, 0.0), nose["centre"], float(nose["radius"]), source)
+            return cls(loop, (0.0, 0.0), None, 0.0, source)
         if nose is not None:
             r = float(nose["radius"])
             cx, cz = nose["centre"]
@@ -151,6 +169,33 @@ class ToolOutline:
                 nose_centre = (float(centre[0]), float(centre[1]))
         control = (nose_centre[0] - r, nose_centre[1] - r)
         return cls(pts, control, nose_centre, r, "Isoshape parameters")
+
+    @classmethod
+    def from_threading(cls, profile_angle, tip_radius, width, height=None, nose_segments=16):
+        """
+        Threading insert from the Threading shape parameters: a V of
+        profile_angle pointing toward the axis (-X), symmetric about Z = 0,
+        with tip_radius at its tip, flanks up to the insert's width, then
+        straight. The control point is the V's sharp point, at the origin.
+        """
+        half = math.radians(profile_angle / 2.0)
+        r = max(float(tip_radius), 0.0)
+        w2 = float(width) / 2.0
+        x_flank_top = w2 / math.tan(half)  # where the flanks reach the full width
+        top = x_flank_top + (float(height) if height else float(width))
+        if r > 0:
+            cx = r / math.sin(half)
+            # tangent points on the flanks, r / tan(half) from the sharp point
+            t = r / math.tan(half)
+            beta = math.atan2(t * math.sin(half), t * math.cos(half) - cx)  # +Z tangent point
+            pts = [(cx + r * math.cos(a), r * math.sin(a))
+                   for a in np.linspace(beta, 2 * math.pi - beta, nose_segments + 1)]
+            nose = (cx, 0.0)
+        else:
+            pts = [(0.0, 0.0)]
+            nose = None
+        pts += [(x_flank_top, -w2), (top, -w2), (top, w2), (x_flank_top, w2)]
+        return cls(pts, (0.0, 0.0), nose, r, "Threading parameters")
 
     # --------------------------------------------------------------- envelope
     def _build_envelope(self, step):

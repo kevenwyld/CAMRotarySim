@@ -24,7 +24,7 @@ try:
 except ImportError:
     HAVE_QT = False
 
-from fakejob import make_doc  # noqa: E402
+from fakejob import make_doc, make_thread_doc  # noqa: E402
 
 
 _APP = None
@@ -110,6 +110,37 @@ class TestHeadlessGui(unittest.TestCase):
         self.assertTrue(stock.ViewObject.Visibility)
         self.assertTrue(model.ViewObject.Visibility)
         self.assertNotIn(scene_root, root.children)
+        p.timer.deleteLater()
+        p.form.deleteLater()
+        self.app.processEvents()
+
+    def test_task_panel_thread_job(self):
+        doc, job, op, tc = make_thread_doc(self.fake)
+        self.fc.ActiveDocument = doc
+        from camrotarysim.gui.taskpanel import TaskPanel
+        p = TaskPanel(doc)
+        self.assertEqual(p.list_ops.item(0).checkState().name, "Checked")
+        p.on_play()
+        self.assertIsNotNone(p.sim, p.report.toPlainText())
+        angles = []
+        n = 0
+        while p.timer.isActive() and n < 100000:
+            p.on_tick()
+            angles.append(p.scene.stock_rot.rotation.value)
+            n += 1
+        self.assertTrue(p.sim.done)
+        # the displayed workpiece turned with the spindle during the passes
+        self.assertGreater(len({a[1] for a in angles if a}), 10)
+        text = p.report.toPlainText()
+        self.assertIn("pitch 11.259", text)
+        self.assertIn("not cut deep enough", text)
+        self.assertIn("right-hand for a Forward spindle", text)
+        self.assertIn("outline from tool shape of threading", text)
+        self.assertGreater(len(p.scene.stock_coords.point.values), 10000)
+        # changing the hand or the angles forces a rebuild
+        p.combo_hand.setCurrentIndex(1)
+        self.assertTrue(p.dirty)
+        p.reject()
         p.timer.deleteLater()
         p.form.deleteLater()
         self.app.processEvents()

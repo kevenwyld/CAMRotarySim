@@ -14,7 +14,7 @@ import FreeCADGui
 from PySide import QtCore, QtGui
 
 from .. import freecad_adapter as fa
-from ..core import compare
+from ..core import compare, thread_check
 from ..core.mesh import column_colours, revolve
 from ..core.report import format_report
 from ..core.simulation import Simulation
@@ -24,7 +24,8 @@ PREFS = "User parameter:BaseApp/Preferences/Mod/CAMRotarySim"
 SPEEDS = (1, 5, 10, 25, 50)          # same steps as the CAM simulator's speed control
 SAMPLES_PER_TICK = 20                # at speed 1
 TICK_MS = 40
-MESH_INTERVAL = 0.12                 # s between stock mesh rebuilds during playback
+MESH_INTERVAL = 0.12                 # s between stock mesh rebuilds during playback (at least)
+HANDS = ("Right-hand", "Left-hand")
 
 
 def _icon(obj):
@@ -51,6 +52,9 @@ class TaskPanel:
         self.tool_meshes = {}
         self.current_tool_op = None
         self.last_mesh = 0.0
+        self.mesh_time = 0.0
+        self.zones = []
+        self.threads = []
         self.speed_index = min(self.prefs.GetInt("SpeedIndex", 1), len(SPEEDS) - 1)
         self.timer = QtCore.QTimer()
         self.timer.setInterval(TICK_MS)
@@ -92,6 +96,24 @@ class TaskPanel:
                                            (translate("Uncut tolerance"), self.spin_uncut))):
             grid.addWidget(QtGui.QLabel(label), row, 0)
             grid.addWidget(sp, row, 1)
+        self.spin_angles = QtGui.QSpinBox()
+        self.spin_angles.setRange(24, 720)
+        self.spin_angles.setSingleStep(24)
+        self.spin_angles.setValue(self.prefs.GetInt("ThreadAngles", 120))
+        self.spin_angles.setToolTip(translate("Angles around the part where threads are cut (more: finer, slower)"))
+        self.spin_angles.valueChanged.connect(self.mark_dirty)
+        grid.addWidget(QtGui.QLabel(translate("Thread angles")), 3, 0)
+        grid.addWidget(self.spin_angles, 3, 1)
+        self.combo_hand = QtGui.QComboBox()
+        for h in HANDS:
+            self.combo_hand.addItem(translate(h))
+        self.combo_hand.setCurrentIndex(1 if self.prefs.GetBool("ForwardLeftHand", False) else 0)
+        self.combo_hand.setToolTip(translate(
+            "The thread a Forward spindle cuts when the tool feeds toward -Z. Path commands don't say: it "
+            "depends on how the machine turns and which side the tool is on. Reverse cuts the other hand."))
+        self.combo_hand.currentIndexChanged.connect(self.mark_dirty)
+        grid.addWidget(QtGui.QLabel(translate("Forward spindle cuts")), 4, 0)
+        grid.addWidget(self.combo_hand, 4, 1)
         lay.addLayout(grid)
 
         self.slider = QtGui.QSlider(QtCore.Qt.Orientation.Horizontal)
@@ -225,8 +247,13 @@ class TaskPanel:
         QtGui.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
         try:
             ds = self.spin_res.value()
-            stock, inputs, polylines, notes = fa.build_inputs(job, ops, ds)
-            self.sim = Simulation(stock, inputs, step=ds)
+            right = self.combo_hand.currentIndex() == 0
+            self.prefs.SetBool("ForwardLeftHand", not right)
+            self.prefs.SetInt("ThreadAngles", self.spin_angles.value())
+            stock, inputs, polylines, notes = fa.build_inputs(job, ops, ds, forward_right_hand=right)
+            self.sim = Simulation(stock, inputs, step=ds, thread_angles=self.spin_angles.value())
+            self.zones = thread_check.thread_zones(self.sim)
+            self.threads = []
             self.notes = notes
             self.part_R = compare.part_profile(polylines, stock.s) if polylines else None
             self.part_neg = compare.part_profile(polylines, stock.s, -1) if polylines else None
@@ -348,9 +375,10 @@ class TaskPanel:
         self.update_tool()
         self.update_progress()
         now = time.monotonic()
-        if now - self.last_mesh > MESH_INTERVAL:
-            self.update_stock_mesh()
-            self.last_mesh = now
+        if now - self.last_mesh > max(MESH_INTERVAL, 3 * self.mesh_time):
+            self.update_stock_mesh(final=False)
+            self.last_mesh = time.monotonic()
+            self.mesh_time = self.last_mesh - now
 
     # ------------------------------------------------------------ display
     def update_all(self, report=True):
@@ -368,14 +396,25 @@ class TaskPanel:
             return None
         st = self.sim.stock
         return compare.compare(st.profile(), self.part_R, st.s, self.spin_gouge.value(),
-                               self.spin_uncut.value(), self.reach)
+                               self.spin_uncut.value(), self.reach, [(z.z0, z.z1) for z in self.zones])
 
-    def update_stock_mesh(self, *_):
+    def measure_threads(self):
+        st = self.sim.stock
+        self.threads = []
+        for z in self.zones:
+            tool = self.sim.ops[z.op].tool
+            self.threads.append(thread_check.measure(st, z, max(-tool.zmin, tool.zmax), self.spin_gouge.value()))
+        return self.threads
+
+    def update_stock_mesh(self, *_, final=True):
         if self.sim is None or self.scene is None:
             return
         st = self.sim.stock
         res = self.comparison() if self.chk_dev.isChecked() else None
-        colours = column_colours(st, res.classes if res is not None else None)
+        verdicts = ()
+        if res is not None and final and self.zones:
+            verdicts = [((t.zone.z0, t.zone.z1), t.verdict) for t in self.measure_threads()]
+        colours = column_colours(st, res.classes if res is not None else None, thread_verdicts=verdicts)
         v, t, c = revolve(st, colours)
         self.scene.set_stock_mesh(v, t, c)
 
@@ -389,6 +428,7 @@ class TaskPanel:
             self.scene.set_tool_mesh(v, t)
             self.current_tool_op = op
         self.scene.set_tool_position(sim.position, self.tool_meshes[op][2])
+        self.scene.set_spindle_angle(sim.spindle_angle)
 
     def update_progress(self):
         sim = self.sim
@@ -413,9 +453,13 @@ class TaskPanel:
     def update_report(self):
         if self.sim is None:
             return
-        text = format_report(self.sim, self.comparison(), self.part_R, self.part_neg)
+        threads = self.measure_threads() if self.zones else None
+        text = format_report(self.sim, self.comparison(), self.part_R, self.part_neg, threads=threads)
         if getattr(self, "notes", None):
             text += "\n\nTools:\n" + "\n".join("  " + n for n in self.notes)
         text += ("\n\nNotes: 'reachable' and holder checks use the insert outline only; "
                  "the holder and chuck are not modelled.")
+        if self.zones:
+            text += (" Threads: %s for a Forward spindle feeding toward -Z (setting above); the rapid out "
+                     "after each G33 is taken as instant." % self.combo_hand.currentText().lower())
         self.report.setPlainText(text)

@@ -103,8 +103,27 @@ class RotaryStock:
         """Rotary milling extension point: lower R only at the given cells."""
         self.R[theta_idx, j_idx] = np.minimum(self.R[theta_idx, j_idx], np.maximum(radius, 0.0))
 
+    def set_angles(self, n_theta):
+        """
+        Give an axisymmetric stock n_theta angles (needed once a cut depends
+        on the spindle angle, e.g. threading). Only from n_theta = 1.
+        """
+        if n_theta == self.n_theta:
+            return
+        if self.n_theta != 1:
+            raise ValueError("can only add angles to an axisymmetric stock")
+        self._set_shape(np.repeat(self.R, int(n_theta), axis=0))
+
+    def _set_shape(self, R):
+        self.R = R
+        self.n_theta = R.shape[0]
+        self.theta = np.arange(self.n_theta) * (2 * math.pi / self.n_theta)
+
     def snapshot(self):
         return self.R.copy()
 
     def restore(self, snap):
-        self.R[:] = snap
+        if snap.shape == self.R.shape:
+            self.R[:] = snap
+        else:
+            self._set_shape(snap.copy())

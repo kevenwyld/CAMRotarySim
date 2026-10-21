@@ -46,11 +46,14 @@ class SimScene:
         hints.shapeType = coin.SoShapeHints.SOLID
         hints.creaseAngle = 0.6
         self.stock_mat = coin.SoMaterial()
+        # the workpiece turns with the spindle during G33, so the tool (at
+        # world angle 0) sits in the groove it is cutting
+        self.stock_rot = coin.SoRotation()
         bind = coin.SoMaterialBinding()
         bind.value = coin.SoMaterialBinding.PER_VERTEX_INDEXED
         self.stock_coords = coin.SoCoordinate3()
         self.stock_faces = coin.SoIndexedFaceSet()
-        for n in (hints, self.stock_mat, bind, self.stock_coords, self.stock_faces):
+        for n in (hints, self.stock_rot, self.stock_mat, bind, self.stock_coords, self.stock_faces):
             sep.addChild(n)
         self.stock_sw = _switch(sep)
 
@@ -101,6 +104,10 @@ class SimScene:
         self.stock_faces.coordIndex.setValues(0, len(idx), idx)
         self.stock_faces.materialIndex.setNum(len(idx))
         self.stock_faces.materialIndex.setValues(0, len(idx), idx)
+
+    def set_spindle_angle(self, angle):
+        """Rotate the displayed workpiece by angle (rad) about the Z axis."""
+        self.stock_rot.rotation.setValue(coin.SbVec3f(0.0, 0.0, 1.0), float(angle))
 
     def set_tool_mesh(self, verts, tris):
         """Tool geometry in tool-shape coordinates (control point at control_in_shape)."""

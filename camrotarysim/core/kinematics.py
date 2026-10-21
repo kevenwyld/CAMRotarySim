@@ -83,6 +83,27 @@ class TurningKinematics:
         stock.lower_all_angles(j0, j1, low)
         return Contact(removed, buried, j0, j1, low)
 
+    def apply_at_angle(self, stock, tool, pos, i):
+        """
+        Lower R only at angle index i: the tool passing angle theta_i of the
+        spinning workpiece during a spindle-synchronized (G33) move.
+        """
+        x, z = self.tool_frame(pos)
+        if self.sign > 0:
+            j0, j1 = stock.column_range(z + tool.zmin, z + tool.zmax)
+            dz = stock.s[j0:j1] - z
+        else:
+            j0, j1 = stock.column_range(z - tool.zmax, z - tool.zmin)
+            dz = z - stock.s[j0:j1]
+        if j0 >= j1:
+            return 0.0
+        low = np.maximum(x + tool.lower(dz), 0.0)
+        row = stock.R[i, j0:j1]
+        removed = float(np.max(row - low, initial=0.0))
+        if removed > 0.0:
+            np.minimum(row, low, out=row)
+        return removed
+
 
 class RotaryMillingKinematics:
     """

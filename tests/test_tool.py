@@ -11,7 +11,7 @@ HERE = os.path.dirname(__file__)
 DATA = os.path.join(HERE, "data")
 sys.path.insert(0, os.path.join(HERE, ".."))
 
-from camrotarysim.core.tool import ToolOutline  # noqa: E402
+from camrotarysim.core.tool import REF_ORIGIN, ToolOutline  # noqa: E402
 
 
 def _read(path):
@@ -51,6 +51,18 @@ class TestTool(unittest.TestCase):
         ang = sorted(math.degrees(math.atan2(x, z)) for x, z in p if math.hypot(x, z) > 1)
         self.assertAlmostEqual(ang[0], 5.0, 6)
         self.assertAlmostEqual(ang[-1], 85.0, 6)
+
+    def test_threading_section_matches_parameters(self):
+        d = json.loads(_read(os.path.join(DATA, "thread", "tool_threading_section.json")))
+        sec = ToolOutline.from_section(d["edges"], tip_radius=0.05, reference=REF_ORIGIN)
+        par = ToolOutline.from_threading(60.0, 0.05, 6.0)
+        self.assertEqual(sec.control_in_shape, (0.0, 0.0))
+        self.assertEqual(par.control_in_shape, (0.0, 0.0))
+        dz = np.linspace(-2.95, 2.95, 119)
+        self.assertLess(np.max(np.abs(sec.lower(dz) - par.lower(dz))), 1e-4)
+        # 60 degree flanks: x = |dz| / tan(30) away from the tip
+        self.assertAlmostEqual(float(par.lower(1.0)), 1.0 / math.tan(math.radians(30)), 6)
+        self.assertAlmostEqual(float(par.lower(0.0)), 0.05, 6)
 
     def test_no_nose_arc_fallback(self):
         sq = [{"kind": "line", "points": [(1, 1), (3, 1)]}, {"kind": "line", "points": [(3, 1), (3, 3)]},
