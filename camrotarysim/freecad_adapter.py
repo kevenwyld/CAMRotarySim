@@ -153,19 +153,27 @@ def build_stock(job, ds):
 def is_internal(op):
     """
     Whether an op cuts inside (boring, internal threads), as the op itself
-    decides: TurningAddon ops answer through their proxy (is_internal for
-    Rough/Profile with Side = Internal, internal for Turn Thread, which
-    follows the selected face unless set); otherwise the Side / ThreadType
-    properties.
+    decides. TurningAddon proxies: Turn Thread's internal() follows the
+    selected face unless ThreadType is set; Rough/Profile answer
+    is_internal() (Side = Internal). Every TurningAddon op inherits
+    is_internal() from PathTurnBase.ObjectOp, where it is False for ops
+    without a Side (supports_internal = False), Turn Thread included; so
+    the op's own internal() is asked first, and either saying so counts.
+    Without a proxy answer: the Side / ThreadType properties.
     """
     proxy = getattr(op, "Proxy", None)
-    for name in ("is_internal", "internal"):
+    answered = False
+    for name in ("internal", "is_internal"):
         fn = getattr(proxy, name, None)
         if callable(fn):
             try:
-                return bool(fn(op))
+                if fn(op):
+                    return True
+                answered = True
             except Exception:
                 pass
+    if answered:
+        return False
     return getattr(op, "Side", "") == "Internal" or getattr(op, "ThreadType", "") == "Internal"
 
 

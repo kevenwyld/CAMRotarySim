@@ -109,6 +109,16 @@ class TestAdapter(unittest.TestCase):
         self.assertEqual(stock.Rin[0, stock.column_range(-39.9, -39.9)[0]], 4.0)
         self.assertEqual(stock.Rin[0, stock.column_range(-40.1, -40.1)[0]], 0.0)
 
+    def test_thread_op_answers_through_internal(self):
+        # Turn Thread inherits is_internal() (False: no Side) and answers through internal()
+        doc, job, ops = make_boring_doc(fakefreecad)
+        thread = ops[3]
+        self.assertFalse(thread.Proxy.is_internal(thread))
+        self.assertTrue(thread.Proxy.internal(thread))
+        self.assertTrue(self.fa.is_internal(thread))
+        # an external Rough answers False through is_internal(), and its Side isn't consulted again
+        self.assertFalse(self.fa.is_internal(ops[2]))
+
     def test_side_property_fallback(self):
         op = types.SimpleNamespace(Proxy=object(), Side="Internal")
         self.assertTrue(self.fa.is_internal(op))

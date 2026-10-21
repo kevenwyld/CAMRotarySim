@@ -99,6 +99,15 @@ def make_thread_doc(fake):
     return doc, job, op, tc
 
 
+class TurnBaseOp:
+    """Like PathTurnBase.ObjectOp: is_internal() is Side = Internal on ops that support it."""
+    __module__ = "PathTurnScripts.PathTurnBase"
+    supports_internal = False
+
+    def is_internal(self, obj):
+        return self.supports_internal and getattr(obj, "Side", "External") == "Internal"
+
+
 def make_boring_doc(fake, min_diameter=10.0):
     """
     The boring Job (boring_test.FCStd): a tube (OD 29.994, bore 19.994) from a
@@ -135,13 +144,14 @@ def make_boring_doc(fake, min_diameter=10.0):
     for n in spec["order"]:
         o = spec["ops"][n]
         internal = o["internal"]
-        # the TurningAddon proxies answer is_internal (Rough/Profile) or internal (Thread)
+        # as in the TurningAddon: every op inherits is_internal() from the base,
+        # False without Side support (Turn Thread included); Turn Thread has internal()
         if n == "TurnThread":
-            proxy = type("ObjectTurnThread", (), {"__module__": "PathTurnScripts.PathTurnThread",
-                                                  "internal": lambda self, obj, v=internal: v})()
+            proxy = type("ObjectTurnThread", (TurnBaseOp,), {"__module__": "PathTurnScripts.PathTurnThread",
+                                                             "internal": lambda self, obj, v=internal: v})()
         else:
-            proxy = type("ObjectTurn", (), {"__module__": "PathTurnScripts.PathTurn" + n[4:],
-                                            "is_internal": lambda self, obj, v=internal: v})()
+            proxy = type("ObjectTurn", (TurnBaseOp,), {"__module__": "PathTurnScripts.PathTurn" + n[4:],
+                                                       "supports_internal": True})()
         with open(os.path.join(DATA, "boring", n + ".nc")) as f:
             cmds = [Cmd(c, p) for c, p in parse_gcode_text(f.read())]
         op = types.SimpleNamespace(Name=n, Label=n, Active=True, Visibility=True, ViewObject=VO(), Proxy=proxy,
