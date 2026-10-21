@@ -1,5 +1,7 @@
 # CAM Rotary Simulator
 
+| :warning: WARNING: This code is AI generated, use extreme caution.  Meant as a proof of concept only. |
+
 A proof-of-concept FreeCAD addon that simulates material removal for the
 turning operations of the [TurningAddon](https://github.com/kevenwyld/TurningAddon)
 and checks the result against the Job's model. Its stock model is a rotary
