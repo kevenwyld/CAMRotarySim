@@ -3,7 +3,7 @@
 Turning tool outline in the lathe XZ plane.
 
 The outline is a closed polygon in (x, z), relative to the tool's control
-point, the point the path is programmed to. For the TurningAddon ops that
+point, the point the path is programmed to. For CAM Lathe Turning ops that
 is the insert's imaginary tip: the nose centre is at (x + r, z + r).
 
 The outline normally comes from the tool solid of the op's ToolController
@@ -11,7 +11,7 @@ The outline normally comes from the tool solid of the op's ToolController
 from_threading() build it from the shape parameters, as a fallback and
 for tests.
 
-Control point by shape (TurningAddon TurnToolShapes.py and shape files):
+Control point by shape (CAM Lathe Turning TurnToolShapes.py and shape files):
 - Isoshape: the shape origin is the sharp corner; paths are programmed to
   the imaginary tip, the nose centre minus (r, r) (REF_IMAGINARY_TIP);
 - Threading, Grooving, FullRadius: the shape origin is the point the path
@@ -221,7 +221,7 @@ class ToolOutline:
         """
         The outline mirrored in X about the control point: an external tool
         used inside (boring, internal threading), with its body toward the
-        axis. The TurningAddon bores by mirroring external turning, so the
+        axis. CAM Lathe Turning bores by mirroring external turning, so the
         same insert's reference point mirrors with it.
         """
         m = ToolOutline.__new__(ToolOutline)

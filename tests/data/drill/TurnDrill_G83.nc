@@ -1,7 +1,7 @@
-(TurnDrill: TurningAddon PathTurnDrill.op_generate_gcode, Peck (G83))
+(TurnDrill: CAM Lathe Turning PathTurnDrill.op_generate_gcode, Peck (G83))
 (Drill Ø10.000, point 118° [3.004 long])
 (Peck [G83], pecks 2.000: from Z -2.000 [R plane] to Z -116.004)
-(The full diameter reaches the hole's bottom [Z -113.000])
+(The full diameter reaches Back, Z -113.000: 110.000 deep from Front, Z -3.000)
 G18
 G0 X18.000000
 G0 X18.000000 Z3.000000

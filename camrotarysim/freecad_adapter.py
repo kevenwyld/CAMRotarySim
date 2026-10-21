@@ -24,7 +24,7 @@ from .core.simulation import OpInput
 from .core.stock import RotaryStock
 from .core.tool import REF_IMAGINARY_TIP, REF_ORIGIN, ToolOutline
 
-# Thread op properties passed to the thread check (TurningAddon PathTurnThread)
+# Thread op properties passed to the thread check (CAM Lathe Turning PathTurnThread)
 THREAD_PROPS = ("Pitch", "ThreadDepth", "ThreadDiameter", "ThreadReport", "ThreadStandard", "ThreadSize",
                 "DrillReport")
 
@@ -48,7 +48,7 @@ def tool_of(op):
 
 
 def is_turning_op(op):
-    """TurningAddon op, or any op whose tool has the Isoshape insert parameters."""
+    """CAM Lathe Turning op, or any op whose tool has the Isoshape insert parameters."""
     proxy = getattr(op, "Proxy", None)
     if proxy is not None and type(proxy).__module__.startswith("PathTurnScripts"):
         return True
@@ -87,7 +87,7 @@ def is_axial_tool(tool):
 
 
 def is_drill_op(op):
-    """TurningAddon Turn Drill (its proxy says it uses a drill tool), or any op whose tool is a drill."""
+    """CAM Lathe Turning Turn Drill (its proxy says it uses a drill tool), or any op whose tool is a drill."""
     if getattr(getattr(op, "Proxy", None), "uses_drill_tool", False):
         return True
     tool = tool_of(op)
@@ -97,7 +97,7 @@ def is_drill_op(op):
 def tool_reference(tool):
     """
     Which point of the tool shape the path is programmed to: the imaginary
-    tip for Isoshape tools, the shape origin for the TurningAddon's other
+    tip for Isoshape tools, the shape origin for CAM Lathe Turning's other
     shapes (threading, grooving, full radius).
     """
     shape_id = str(getattr(tool, "ShapeID", "") or "").lower()
@@ -175,9 +175,9 @@ def build_stock(job, ds):
 def is_internal(op):
     """
     Whether an op cuts inside (boring, internal threads), as the op itself
-    decides. TurningAddon proxies: Turn Thread's internal() follows the
+    decides. CAM Lathe Turning proxies: Turn Thread's internal() follows the
     selected face unless ThreadType is set; Rough/Profile answer
-    is_internal() (Side = Internal). Every TurningAddon op inherits
+    is_internal() (Side = Internal). Every CAM Lathe Turning op inherits
     is_internal() from PathTurnBase.ObjectOp, where it is False for ops
     without a Side (supports_internal = False), Turn Thread included; so
     the op's own internal() is asked first, and either saying so counts.
@@ -309,7 +309,7 @@ def build_inputs(job, ops, ds, forward_right_hand=True, hole="auto"):
 # ---------------------------------------------------------------- milling
 
 def is_milling_op(op):
-    """A CAM milling op (not a TurningAddon op), cutting with a milling tool."""
+    """A CAM milling op (not a CAM Lathe Turning op), cutting with a milling tool."""
     proxy = getattr(op, "Proxy", None)
     if proxy is not None and type(proxy).__module__.startswith("PathTurnScripts"):
         return False

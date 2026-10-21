@@ -5,8 +5,9 @@
 A proof-of-concept FreeCAD addon that simulates material removal and checks
 the result against the Job's model. It covers:
 - turning, drilling, boring and threading ops of the
-  [TurningAddon](https://github.com/kevenwyld/TurningAddon), on a rotary height
-  field (a radius per angle and axial position);
+  [CAM Lathe Turning](https://github.com/kevenwyld/CAMLatheTurning) addon
+  (formerly TurningAddon), on a rotary height field (a radius per angle and
+  axial position);
 - CAM milling ops, indexed or rotary (4th axis), on a signed-distance grid.
 
 It is a standalone simulator. CAM's new simulator (C++/OpenGL, `CAMSimulator`)
@@ -58,7 +59,7 @@ toolbar. Minimum FreeCAD 1.1. Requires numpy, which CAM already uses.
    | Amber | uncut material the tool could have reached (milling: any material left beyond the part) |
    | Purple | uncut material this insert can't reach (turning only) |
 
-6. Threads (G33 passes, e.g. the TurningAddon's Turn Thread) are cut along
+6. Threads (G33 passes, e.g. CAM Lathe Turning's Turn Thread) are cut along
    their helix. While a pass runs, the displayed workpiece turns with the
    spindle, so the tool sits in its groove. In the thread's Z range the gouge
    check is replaced by a thread measurement. Its colour is green if the pitch
@@ -152,7 +153,7 @@ These were verified against source and the sample Job, not assumed:
   nose centre is at (X + r, Z + r). This is from LibLathe `nose_compensate` with
   its internal −X frame, which `to_commands(invert_x=True)` flips.
 - **Insert outline:** taken from the op's tool solid, sectioned in the XZ plane at
-  mid thickness. The control point depends on the shape (TurningAddon
+  mid thickness. The control point depends on the shape (CAM Lathe Turning
   `TurnToolShapes.py`):
   - **Isoshape:** the nose arc nearest the shape origin, minus (r, r): the
     imaginary tip.
@@ -160,7 +161,7 @@ These were verified against source and the sample Job, not assumed:
     is the V's sharp point, a tip radius below the tip arc's bottom.
 
   The Isoshape rule finds the imaginary tip wherever the shape's origin is:
-  the TurningAddon's current `isoshape.fcstd` puts it at the imaginary tip,
+  CAM Lathe Turning's current `isoshape.fcstd` puts it at the imaginary tip,
   while older documents keep shapes with it at the sharp corner.
 
   If there is no usable shape, the outline is built from the Threading,
@@ -186,7 +187,7 @@ These were verified against source and the sample Job, not assumed:
   - drilling ops (Turn Drill, or any op with a CAM drill) always do;
   - Turn Thread's `internal()`, which follows the selected face, is asked
     first, then `is_internal()` (Rough and Profile with `Side = Internal`).
-    Every TurningAddon op inherits an `is_internal()` that is False without a
+    Every CAM Lathe Turning op inherits an `is_internal()` that is False without a
     Side, so either saying so counts;
   - otherwise the `Side` or `ThreadType` property.
 
@@ -298,7 +299,7 @@ These were verified against source and the sample Job, not assumed:
   - `devtools/run_sample_job.py --out DIR` prints the report and writes plots.
   - `devtools/make_partoff_guess.py` builds the Partoff fixtures with LibLathe.
   - `devtools/make_drill_fixture.py` builds the Turn Drill fixtures by running
-    the TurningAddon's own `op_generate_gcode()`.
+    CAM Lathe Turning's own `op_generate_gcode()`.
   - `devtools/run_rotary_job.py --out DIR` runs the indexed rotary Job and
     plots sections through each machined face against the model.
   - `devtools/run_thread_job.py --out DIR` runs the thread Job and plots an

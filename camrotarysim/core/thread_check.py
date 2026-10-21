@@ -14,7 +14,7 @@ the bore for an internal one:
   that level lies outside the material; it is then extrapolated along the
   flanks, which are straight, from the groove's width at two radii.
 
-Compared, when the op provides them (TurningAddon Turn Thread), with the
+Compared, when the op provides them (CAM Lathe Turning Turn Thread), with the
 pitch diameter range and major diameter range in its ThreadReport, and the
 programmed root with ThreadDiameter / 2 - ThreadDepth.
 """

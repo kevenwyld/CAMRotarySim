@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Turn Drill fixtures for the boring Job, made by the TurningAddon's own code:
+Turn Drill fixtures for the boring Job, made by CAM Lathe Turning's own code:
 ObjectTurnDrill.op_generate_gcode() and explicit_moves() are taken from
 PathTurnDrill.py (via ast, so FreeCAD isn't needed) and run with stand-in
 objects. The hole is the boring Job's bore (Z -3 to -113, through) drilled
 with a 10 mm, 118 degree drill.
 
-Usage: make_drill_fixture.py TURNINGADDON_DIR [--cycle G83|G73|G81|G82] [--explicit]
+Usage: make_drill_fixture.py CAMLATHETURNING_DIR [--cycle G83|G73|G81|G82] [--explicit]
                              [--depth-to-tip] [--peck 2.0] > TurnDrill.nc
 """
 
@@ -50,14 +50,14 @@ def load(addon):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("turningaddon")
+    ap.add_argument("lathe_addon", help="a CAM Lathe Turning checkout")
     ap.add_argument("--cycle", default="G83", choices=sorted(KIND))
     ap.add_argument("--explicit", action="store_true", help="moves written out, not a canned cycle")
     ap.add_argument("--depth-to-tip", action="store_true")
     ap.add_argument("--peck", type=float, default=2.0)
     ap.add_argument("--diameter", type=float, default=10.0)
     a = ap.parse_args()
-    ns = load(a.turningaddon)
+    ns = load(a.lathe_addon)
     surface = types.SimpleNamespace(Center=types.SimpleNamespace(x=0.0, y=0.0), Axis=types.SimpleNamespace(z=1.0),
                                     Radius=5.0)
     op = ns["ObjectTurnDrill"]()
@@ -73,7 +73,7 @@ def main():
                                 ToolController=types.SimpleNamespace(VertFeed=q(3.333333)))
     tool = types.SimpleNamespace(Diameter=q(a.diameter), TipAngle=q(118.0))
     op.op_generate_gcode(obj, tool)
-    print("(TurnDrill: TurningAddon PathTurnDrill.op_generate_gcode, %s%s)"
+    print("(TurnDrill: CAM Lathe Turning PathTurnDrill.op_generate_gcode, %s%s)"
           % (KIND[a.cycle], ", written out" if a.explicit else ""))
     for line in obj.DrillReport.splitlines():
         print("(%s)" % line.replace("(", "[").replace(")", "]"))

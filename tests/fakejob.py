@@ -146,7 +146,7 @@ def make_boring_doc(fake, min_diameter=10.0, with_drill=False):
     for n in spec["order"]:
         o = spec["ops"][n]
         internal = o["internal"]
-        # as in the TurningAddon: every op inherits is_internal() from the base,
+        # as in CAM Lathe Turning: every op inherits is_internal() from the base,
         # False without Side support (Turn Thread included); Turn Thread has internal()
         if n == "TurnThread":
             proxy = type("ObjectTurnThread", (TurnBaseOp,), {"__module__": "PathTurnScripts.PathTurnThread",

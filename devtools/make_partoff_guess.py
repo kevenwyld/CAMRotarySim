@@ -2,16 +2,16 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
 Generate a Partoff path for the test Job with LibLathe's PartoffOP, without
-FreeCAD, so the simulator has a Partoff input that matches what the
-TurningAddon would produce. This is a stand-in until a real Partoff op is
+FreeCAD, so the simulator has a Partoff input that matches what CAM Lathe
+Turning would produce. This is a stand-in until a real Partoff op is
 exported from FreeCAD.
 
 It mirrors PathTurnBase/PathTurnPartoff: stock silhouette and part outline
-on the -X side (LibLathe's internal frame), chain_profile() taken from the
-TurningAddon source, Isoshape parameters as the tool.
+on the -X side (LibLathe's internal frame), chain_profile() taken from CAM
+Lathe Turning's source, Isoshape parameters as the tool.
 
 Usage:
-  make_partoff_guess.py LIBLATHE_DIR TURNINGADDON_DIR [--final-depth Z] > TurnPartoff.nc
+  make_partoff_guess.py LIBLATHE_DIR CAMLATHETURNING_DIR [--final-depth Z] > TurnPartoff.nc
 """
 
 import argparse
@@ -61,7 +61,7 @@ def part_items(edges):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("liblathe")
-    ap.add_argument("turningaddon")
+    ap.add_argument("lathe_addon", help="a CAM Lathe Turning checkout")
     ap.add_argument("--final-depth", type=float, default=None,
                     help="op FinalDepth (default: stock Z min, the op's default)")
     ap.add_argument("--clearance", type=float, default=3.0)
@@ -77,7 +77,7 @@ def main():
     part = json.loads(_read(os.path.join(DATA, "part_section.json")))
     tool_d = json.loads(_read(os.path.join(DATA, "tool_T37_section.json")))["params"]
 
-    chain, unchained = load_chain_profile(a.turningaddon)(part_items(part["edges"]))
+    chain, unchained = load_chain_profile(a.lathe_addon)(part_items(part["edges"]))
     segs = []
     for s, e, ang in chain:
         seg = Segment(Point(s[0], 0, s[1]), Point(e[0], 0, e[1]))
