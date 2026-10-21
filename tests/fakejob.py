@@ -108,11 +108,13 @@ class TurnBaseOp:
         return self.supports_internal and getattr(obj, "Side", "External") == "Internal"
 
 
-def make_boring_doc(fake, min_diameter=10.0):
+def make_boring_doc(fake, min_diameter=10.0, with_drill=False):
     """
     The boring Job (boring_test.FCStd): a tube (OD 29.994, bore 19.994) from a
     r 15 cylinder; TurnFace, TurnProfile (Side Internal, Min Diameter 10),
-    TurnRough, and an internal M22x2.5 TurnThread.
+    TurnRough, and an internal M22x2.5 TurnThread. with_drill: a Turn Drill
+    (10 mm CAM drill, G83 through) after TurnFace; its tool has no shape here,
+    so its outline comes from the Drill parameters.
     """
     def load(fn):
         with open(os.path.join(DATA, "boring", fn)) as f:
@@ -167,6 +169,17 @@ def make_boring_doc(fake, min_diameter=10.0):
         if "ThreadReport" in o:
             op.ThreadReport = o["ThreadReport"]
         ops.append(op)
+        if with_drill and n == "TurnFace":
+            drill = types.SimpleNamespace(Name="Drill", Label="10mm Drill", ShapeID="drill", ShapeType="Drill",
+                                          Shape=None, Diameter=q(10.0), TipAngle=q(118.0), Length=q(150.0))
+            proxy = type("ObjectTurnDrill", (TurnBaseOp,), {"__module__": "PathTurnScripts.PathTurnDrill",
+                                                            "uses_drill_tool": True})()
+            with open(os.path.join(DATA, "drill", "TurnDrill_G83.nc")) as f:
+                cmds = [Cmd(c, p) for c, p in parse_gcode_text(f.read())]
+            ops.append(types.SimpleNamespace(Name="TurnDrill", Label="TurnDrill", Active=True, Visibility=True,
+                                             ViewObject=VO(), Proxy=proxy,
+                                             ToolController=types.SimpleNamespace(Tool=drill, SpindleDir="Forward"),
+                                             Path=types.SimpleNamespace(Commands=cmds)))
     job = types.SimpleNamespace(Name="Job", Label="Job", ViewObject=VO(), Stock=stock,
                                 Model=types.SimpleNamespace(OutList=[model]),
                                 Operations=types.SimpleNamespace(OutList=ops))

@@ -25,7 +25,8 @@ from .core.stock import RotaryStock
 from .core.tool import REF_IMAGINARY_TIP, REF_ORIGIN, ToolOutline
 
 # Thread op properties passed to the thread check (TurningAddon PathTurnThread)
-THREAD_PROPS = ("Pitch", "ThreadDepth", "ThreadDiameter", "ThreadReport", "ThreadStandard", "ThreadSize")
+THREAD_PROPS = ("Pitch", "ThreadDepth", "ThreadDiameter", "ThreadReport", "ThreadStandard", "ThreadSize",
+                "DrillReport")
 
 Y_AXIS = FreeCAD.Vector(0, 1, 0)
 
@@ -76,6 +77,23 @@ def edge_dicts(edges, deflection=0.005):
     return out
 
 
+AXIAL_SHAPES = ("drill", "reamer")   # CAM shapes that cut along the spindle axis on a lathe
+
+
+def is_axial_tool(tool):
+    """A CAM drill (or reamer): it cuts along the spindle axis, at X 0."""
+    names = {str(getattr(tool, "ShapeID", "") or "").lower(), str(getattr(tool, "ShapeType", "") or "").lower()}
+    return any(n in AXIAL_SHAPES for n in names)
+
+
+def is_drill_op(op):
+    """TurningAddon Turn Drill (its proxy says it uses a drill tool), or any op whose tool is a drill."""
+    if getattr(getattr(op, "Proxy", None), "uses_drill_tool", False):
+        return True
+    tool = tool_of(op)
+    return tool is not None and is_axial_tool(tool)
+
+
 def tool_reference(tool):
     """
     Which point of the tool shape the path is programmed to: the imaginary
@@ -116,6 +134,10 @@ def tool_outline(tool):
         t = ToolOutline.from_iso(_value(tool.EdgeLength), _value(tool.TipAngle),
                                  _value(tool.TipRadius), _value(tool.Rotation))
         return t, (note + "; " if note else "") + "using Isoshape parameters"
+    if is_axial_tool(tool) and hasattr(tool, "Diameter"):
+        t = ToolOutline.from_drill(_value(tool.Diameter), _value(getattr(tool, "TipAngle", 118.0)),
+                                   _value(tool.Length) if hasattr(tool, "Length") else None)
+        return t, (note + "; " if note else "") + "using Drill parameters"
     if all(hasattr(tool, p) for p in ("ProfileAngle", "TipRadius", "Width")):
         t = ToolOutline.from_threading(_value(tool.ProfileAngle), _value(tool.TipRadius), _value(tool.Width))
         return t, (note + "; " if note else "") + "using Threading parameters"
@@ -159,8 +181,12 @@ def is_internal(op):
     is_internal() from PathTurnBase.ObjectOp, where it is False for ops
     without a Side (supports_internal = False), Turn Thread included; so
     the op's own internal() is asked first, and either saying so counts.
-    Without a proxy answer: the Side / ThreadType properties.
+    Without a proxy answer: the Side / ThreadType properties. Drilling ops
+    (Turn Drill, or any op with a drill tool) are internal: the drill cuts
+    the hole from X 0 out to its radius.
     """
+    if is_drill_op(op):
+        return True     # a drill on the axis cuts a hole: an internal tool
     proxy = getattr(op, "Proxy", None)
     answered = False
     for name in ("internal", "is_internal"):
@@ -231,10 +257,10 @@ def build_inputs(job, ops, ds, forward_right_hand=True, hole="auto"):
     """
     (stock, [OpInput], part polylines, notes) for the selected ops.
 
-    hole: the starting hole internal ops bore from, until drilling is
-    simulated: "auto" (the smallest Min Diameter set on an internal op,
-    from the stock's front down the part's bore, or through), None, or
-    (diameter, depth from the stock's front).
+    hole: the hole internal ops bore from when nothing selected drills it:
+    "auto" (none if a drilling op is selected; else the smallest Min
+    Diameter set on an internal op, from the stock's front down the part's
+    bore, or through), None, or (diameter, depth from the stock's front).
     """
     stock = build_stock(job, ds)
     model = model_shape(job)
@@ -256,7 +282,10 @@ def build_inputs(job, ops, ds, forward_right_hand=True, hole="auto"):
                 c[0].upper().startswith("G33") for c in inputs[-1].commands):
             notes.append("%s: spindle direction None on a thread op; simulated as Forward" % op.Label)
     stock.hole = None
-    if hole == "auto":
+    drills = [op.Label for op in ops if is_drill_op(op)]
+    if hole == "auto" and drills:
+        notes.append("no starting hole: drilled by %s" % ", ".join(drills))
+    elif hole == "auto":
         found = hole_from_ops(ops)
         if found:
             r, label = found

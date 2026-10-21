@@ -1,0 +1,75 @@
+{
+ "source": "FreeCAD main src/Mod/CAM/Tools/Shape/drill.fcstd: Body sectioned at Y=0 (its defaults: Diameter 3, TipAngle 119, Length 50)",
+ "params": {
+  "Diameter": 3.0,
+  "TipAngle": 119.0,
+  "Length": 50.0
+ },
+ "edges": [
+  {
+   "kind": "line",
+   "points": [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     -1.5,
+     0.883567525
+    ]
+   ]
+  },
+  {
+   "kind": "line",
+   "points": [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     1.5,
+     0.883567525
+    ]
+   ]
+  },
+  {
+   "kind": "line",
+   "points": [
+    [
+     -1.5,
+     0.883567525
+    ],
+    [
+     -1.5,
+     50.0
+    ]
+   ]
+  },
+  {
+   "kind": "line",
+   "points": [
+    [
+     -1.5,
+     50.0
+    ],
+    [
+     1.5,
+     50.0
+    ]
+   ]
+  },
+  {
+   "kind": "line",
+   "points": [
+    [
+     1.5,
+     0.883567525
+    ],
+    [
+     1.5,
+     50.0
+    ]
+   ]
+  }
+ ]
+}

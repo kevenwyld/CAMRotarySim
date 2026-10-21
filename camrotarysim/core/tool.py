@@ -18,6 +18,10 @@ Control point by shape (TurningAddon TurnToolShapes.py and shape files):
   is programmed to (REF_ORIGIN): the profile's sharp point for threading,
   the edge's lowest point at the chuck-side flank for grooving and full
   radius blades.
+- CAM's Drill (and other revolved milling shapes): a revolution about Z
+  with the tip at the origin, the body toward +Z; the tip is programmed
+  (REF_ORIGIN). On a lathe it drills along the spindle axis at X 0, as an
+  internal tool.
 
 Isoshape conventions (checked against isoshape.fcstd, whose sketch binds
 TipAngle, -Rotation, EdgeLength and TipRadius, and against
@@ -197,6 +201,21 @@ class ToolOutline:
             nose = None
         pts += [(x_flank_top, -w2), (top, -w2), (top, w2), (x_flank_top, w2)]
         return cls(pts, (0.0, 0.0), nose, r, "Threading parameters")
+
+    @classmethod
+    def from_drill(cls, diameter, tip_angle, length=None):
+        """
+        A twist drill's section in the XZ plane, from CAM's Drill shape
+        parameters: point of tip_angle at the origin, body of diameter to
+        length (default 3 diameters past the point) toward +Z.
+        """
+        r = float(diameter) / 2.0
+        point = r / math.tan(math.radians(tip_angle) / 2.0) if 0 < tip_angle < 180 else 0.0
+        top = float(length) if length else point + 3 * float(diameter)
+        pts = [(0.0, 0.0), (r, point), (r, top), (-r, top), (-r, point)]
+        if point == 0.0:
+            pts = [(r, 0.0), (r, top), (-r, top), (-r, 0.0)]
+        return cls(pts, (0.0, 0.0), None, 0.0, "Drill parameters")
 
     def mirrored(self):
         """

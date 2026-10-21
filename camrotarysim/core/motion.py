@@ -120,6 +120,8 @@ class MotionState:
     plane: str = "G17"
     motion: Optional[str] = None
     feed: Optional[float] = None
+    retract_mode: str = "G98"   # canned cycle return level (G98: old Z, G99: R)
+    cycle: dict = field(default_factory=dict)  # sticky canned cycle words and the series' old Z
 
 
 def arc_geometry(start, end, params, plane, ccw):
@@ -166,7 +168,9 @@ class MotionInterpreter:
     """Turns Path commands into Move objects, carrying modal state across ops."""
 
     IGNORED = {"G20", "G21", "G40", "G41", "G42", "G43", "G49", "G54", "G55", "G56", "G57",
-               "G58", "G59", "G90", "G94", "G95", "G96", "G97", "G98", "G99", "G80"}
+               "G58", "G59", "G90", "G94", "G95", "G96", "G97", "G4"}
+    CYCLES = ("G73", "G81", "G82", "G83")
+    PECK_CLEARANCE = 0.254   # LinuxCNC's default G73/G83 peck clearance (0.010 in), unless D is given
 
     def __init__(self, state=None, arc_tol=0.002):
         self.state = state or MotionState()
@@ -175,6 +179,80 @@ class MotionInterpreter:
 
     def _diag(self, kind, op, index, message, value=0.0):
         self.diagnostics.append(Diagnostic(kind, op, index, message, value))
+
+    def _cycle(self, n, params, op, index):
+        """
+        Expand a canned drilling cycle (G81, G82, G83, G73) into moves, as
+        LinuxCNC's G-code reference describes them: along the selected
+        plane's normal (Z in G17); preliminary motion (rapid to R if below
+        it, rapid to the cycle's position in the plane, rapid to R); then
+        G81/G82 feed to the bottom (G82's dwell moves nothing), G83 pecks of
+        Q, rapid out to R after each and back down to the peck clearance
+        above where it reached, G73 pecks of Q backing off the clearance
+        only; finally a rapid to clear Z: the position before the series
+        under G98 if that is above R, else R. R is sticky, and Z and Q
+        within a series.
+        """
+        st = self.state
+        u, v, k = PLANES[st.plane]
+        cyc = st.cycle
+        if not cyc:
+            cyc["old"] = st.pos[k]
+        for w in ("R", "Q", AXES[k]):
+            if w in params:
+                cyc[w] = float(params[w])
+        if "F" in params:
+            st.feed = float(params["F"])
+        r, bottom = cyc.get("R"), cyc.get(AXES[k])
+        if r is None or bottom is None:
+            self._diag("cycle", op, index, "%s without %s: not simulated" % (n, "R" if r is None else AXES[k]))
+            return []
+        if r < bottom:
+            self._diag("cycle", op, index, "%s with R below the bottom (%s): not simulated" % (n, AXES[k]))
+            return []
+        if n in ("G73", "G83") and cyc.get("Q", 0.0) <= 0:
+            self._diag("cycle", op, index, "%s needs a positive Q" % n)
+            return []
+        if any(st.pos[i] is None for i in LINEAR):
+            self._diag("cycle", op, index, "%s before the position is known: not simulated" % n)
+            return []
+        clear = self.PECK_CLEARANCE if "D" not in params else float(params["D"])
+        moves = []
+
+        def go(kind, **axes):  # axes: {"<axis index>": value}
+            start = tuple(st.pos)
+            end = list(st.pos)
+            for i, val in axes.items():
+                end[int(i)] = val
+            end = tuple(end)
+            st.pos = list(end)
+            if end != start:
+                moves.append(Move(kind, start, end, op, index, None if kind == RAPID else st.feed))
+
+        if st.pos[k] < r:
+            go(RAPID, **{str(k): r})
+        target = {str(i): float(params[AXES[i]]) for i in (u, v) if AXES[i] in params}
+        if target:
+            go(RAPID, **target)
+        go(RAPID, **{str(k): r})
+        if n in ("G81", "G82"):
+            go(FEED, **{str(k): bottom})
+        else:
+            q = cyc["Q"]
+            depth = r
+            while True:
+                depth = max(bottom, depth - q)
+                go(FEED, **{str(k): depth})
+                if depth <= bottom + 1e-12:
+                    break
+                if n == "G83":
+                    go(RAPID, **{str(k): r})
+                    go(RAPID, **{str(k): depth + clear})
+                else:
+                    go(RAPID, **{str(k): depth + clear})
+        old = cyc["old"]
+        go(RAPID, **{str(k): old if (st.retract_mode == "G98" and old is not None and old > r) else r})
+        return moves
 
     def run(self, commands: Sequence, op: int = 0) -> List[Move]:
         moves = []
@@ -186,6 +264,16 @@ class MotionInterpreter:
                 continue
             if n in PLANES:
                 st.plane = n
+                continue
+            if n in ("G98", "G99"):
+                st.retract_mode = n
+                continue
+            if n == "G80" or (n in ("G0", "G1", "G2", "G3", "G33") and st.cycle):
+                st.cycle = {}      # end of a series of canned cycles
+                if n == "G80":
+                    continue
+            if n in self.CYCLES:
+                moves.extend(self._cycle(n, params, op, index))
                 continue
             if n in ("G7", "G8"):
                 self._diag("unsupported", op, index,

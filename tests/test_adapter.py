@@ -119,6 +119,27 @@ class TestAdapter(unittest.TestCase):
         # an external Rough answers False through is_internal(), and its Side isn't consulted again
         self.assertFalse(self.fa.is_internal(ops[2]))
 
+    def test_drill_op(self):
+        doc, job, ops = make_boring_doc(fakefreecad, with_drill=True)
+        fa = self.fa
+        drill = ops[1]
+        self.assertTrue(fa.is_drill_op(drill))
+        self.assertTrue(fa.is_internal(drill))
+        self.assertEqual(fa.tool_reference(drill.ToolController.Tool), "origin")
+        stock, inputs, polylines, notes = fa.build_inputs(job, ops, 0.05)
+        # Auto: a drilling op is selected, so no starting hole
+        self.assertIsNone(stock.hole)
+        self.assertFalse(stock.has_bore())
+        self.assertTrue(any("no starting hole: drilled by TurnDrill" in n for n in notes))
+        self.assertTrue(any("10mm Drill: outline from Drill parameters" in n for n in notes))
+        t = inputs[1].tool
+        self.assertEqual(t.control_in_shape, (0.0, 0.0))
+        self.assertAlmostEqual(t.xmax, 5.0)
+        # a CAM drill on an op without the Turn Drill proxy still counts as drilling
+        other = types.SimpleNamespace(Proxy=object(), ToolController=drill.ToolController)
+        self.assertTrue(fa.is_drill_op(other))
+        self.assertFalse(fa.is_drill_op(ops[2]))
+
     def test_side_property_fallback(self):
         op = types.SimpleNamespace(Proxy=object(), Side="Internal")
         self.assertTrue(self.fa.is_internal(op))

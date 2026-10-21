@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no" ?>
 <package format="1">
   <name>CAM Rotary Simulator</name>
-  <description>Material-removal simulator for FreeCAD CAM turning, boring and threading operations (TurningAddon), built on a rotary stock model so rotary (4th-axis) milling can be added later. Checks the result against the Job model for gouges and uncut material.</description>
-  <version>0.3.1</version>
-  <date>2026-10-22</date>
+  <description>Material-removal simulator for FreeCAD CAM turning, drilling, boring and threading operations (TurningAddon), built on a rotary stock model so rotary (4th-axis) milling can be added later. Checks the result against the Job model for gouges and uncut material.</description>
+  <version>0.4.0</version>
+  <date>2026-10-23</date>
   <maintainer email="11936535+kevenwyld@users.noreply.github.com">Keven Wyld</maintainer>
   <license file="LICENSE">LGPL-2.1-or-later</license>
   <url type="repository" branch="main">https://github.com/kevenwyld/CAMRotarySim</url>

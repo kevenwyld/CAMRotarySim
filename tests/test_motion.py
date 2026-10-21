@@ -113,6 +113,40 @@ class TestMotion(unittest.TestCase):
         self.assertTrue(any("positive K" in m for m in msgs))
         self.assertTrue(any("G76" in m for m in msgs))
 
+    def test_canned_cycles(self):
+        def z_path(cmds):
+            moves, diags = run(cmds)
+            return [(m.kind, round(m.end[2], 3)) for m in moves], diags
+
+        start = [("G0", {"X": 0.0, "Y": 0.0, "Z": 5.0}), ("G17", {})]
+        # G81 under G98, old Z (5) above R (1): back to old Z
+        path, _ = z_path(start + [("G98", {}), ("G81", {"X": 0.0, "Y": 0.0, "Z": -10.0, "R": 1.0, "F": 2})])
+        self.assertEqual(path, [("rapid", 1.0), ("feed", -10.0), ("rapid", 5.0)])
+        # G99: back to R; a second G81 in the series keeps R (sticky) and the series' old Z
+        path, _ = z_path(start + [("G99", {}), ("G81", {"Z": -10.0, "R": 1.0, "F": 2}), ("G81", {"Z": -4.0})])
+        self.assertEqual(path, [("rapid", 1.0), ("feed", -10.0), ("rapid", 1.0), ("feed", -4.0), ("rapid", 1.0)])
+        # G83: pecks of Q, out to R after each, back down to 0.254 above the last depth
+        path, _ = z_path(start + [("G98", {}), ("G83", {"Z": -5.0, "R": 1.0, "Q": 2.0, "F": 2})])
+        self.assertEqual(path, [("rapid", 1.0), ("feed", -1.0), ("rapid", 1.0), ("rapid", -0.746), ("feed", -3.0),
+                                ("rapid", 1.0), ("rapid", -2.746), ("feed", -5.0), ("rapid", 5.0)])
+        # G73: pecks of Q, backing off the clearance (D here) only
+        path, _ = z_path(start + [("G98", {}), ("G73", {"Z": -3.0, "R": 1.0, "Q": 2.0, "D": 0.5, "F": 2})])
+        self.assertEqual(path, [("rapid", 1.0), ("feed", -1.0), ("rapid", -0.5), ("feed", -3.0), ("rapid", 5.0)])
+        # below R at the start: up to R first (preliminary motion)
+        path, _ = z_path([("G0", {"X": 0.0, "Y": 0.0, "Z": -1.0}), ("G17", {}), ("G98", {}),
+                          ("G81", {"Z": -6.0, "R": 2.0, "F": 2})])
+        self.assertEqual(path, [("rapid", 2.0), ("feed", -6.0), ("rapid", 2.0)])
+        # errors are reported, not simulated
+        _, diags = z_path(start + [("G81", {"Z": 2.0, "R": 1.0})])
+        self.assertTrue(any("R below the bottom" in d.message for d in diags))
+        _, diags = z_path(start + [("G83", {"Z": -5.0, "R": 1.0})])
+        self.assertTrue(any("positive Q" in d.message for d in diags))
+        # the series ends at G80 (no diagnostic), G4 dwells are silent
+        moves, diags = run(start + [("G81", {"Z": -2.0, "R": 1.0, "F": 2}), ("G80", {}), ("G4", {"P": 0.5}),
+                                    ("G0", {"Z": 9.0})])
+        self.assertEqual(diags, [])
+        self.assertEqual(moves[-1].end[2], 9.0)
+
     def test_parse_nc_text(self):
         c = parse_gcode_text("G18\nG0 F5.000000 X1.0 Z2.0\n(comment)\nG3 F5 I-1 K0 X0 Z1\n")
         self.assertEqual(c[0], ("G18", {}))

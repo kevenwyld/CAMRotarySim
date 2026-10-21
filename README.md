@@ -57,12 +57,13 @@ toolbar. Minimum FreeCAD 1.1. Requires numpy, which CAM already uses.
    - **Thread angles:** the angular resolution of thread zones.
    - **Forward spindle cuts:** the hand a Forward spindle cuts when feeding
      toward −Z. Path commands don't fix the hand; Reverse cuts the other one.
-7. Internal ops are simulated inside: boring (Rough and Profile with
-   Side = Internal) and internal threads. Until drilling is simulated, set the
-   hole they start from with **Starting hole**:
-   - **Auto:** the smallest Min Diameter set on an internal op, from the
-     stock's front down the model's bore, or through the stock if the bore
-     runs out at the back.
+7. Internal ops are simulated inside: drilling (Turn Drill, or any op with a
+   CAM drill), boring (Rough and Profile with Side = Internal) and internal
+   threads. If nothing selected drills the hole, set the hole they start from
+   with **Starting hole**:
+   - **Auto:** none if a drilling op is selected. Otherwise the smallest Min
+     Diameter set on an internal op, from the stock's front down the model's
+     bore, or through the stock if the bore runs out at the back.
    - **None.**
    - **Custom:** a diameter and a depth from the stock's front.
 
@@ -101,6 +102,16 @@ These were verified against source and the sample Job, not assumed:
     corner rounded by TipRadius.
   These agree with LibLathe's `get_tool_cutting_angle()`. Both sources give
   the same outline for the sample tool; see `devtools/run_sample_job.py`.
+- **Drilling:** CAM drills (and reamers) are revolved shapes with the tip at
+  the origin; on a lathe they cut along the spindle axis at X 0, as internal
+  tools.
+  - Canned cycles G81, G82, G83 and G73 are expanded as LinuxCNC's G-code
+    reference describes them: along the selected plane's normal (Z in G17),
+    with preliminary motion and pecks.
+  - G73 and G83 peck clearance is 0.254 mm unless D is given.
+  - The final retract follows G98/G99.
+  - R is sticky, and Z and Q within a series.
+  - The same moves written out as G0/G1 work as any other path.
 - **Internal ops:** whether an op cuts inside is the op's own answer:
   - TurningAddon proxies' `is_internal()` (Rough and Profile with
     `Side = Internal`);
@@ -169,8 +180,9 @@ These were verified against source and the sample Job, not assumed:
   deeper than the insert height is not reported.
 - **Stock shape:** an outside and a bore per angle and position, so no
   undercut pockets in a wall. The axis must be Z.
-- **Drilling:** not simulated yet; the starting hole stands in for it. A drill
-  would be an internal tool at X 0, whose outline is the drill's profile.
+- **Drilling:** canned cycles G85 to G89 (boring, tapping) are reported, not
+  simulated; so are cycles in G91. A drill is taken off-axis only as far as the
+  path moves it (lathe drilling is at X 0).
 - **Diameter mode:** G7/G8 are reported, not applied.
 - **Threads:**
   - G76 is reported, not simulated yet.
@@ -199,6 +211,8 @@ These were verified against source and the sample Job, not assumed:
 - **Dev tools:**
   - `devtools/run_sample_job.py --out DIR` prints the report and writes plots.
   - `devtools/make_partoff_guess.py` builds the Partoff fixtures with LibLathe.
+  - `devtools/make_drill_fixture.py` builds the Turn Drill fixtures by running
+    the TurningAddon's own `op_generate_gcode()`.
   - `devtools/run_thread_job.py --out DIR` runs the thread Job and plots an
     axial section against the ISO basic profile, plus an unrolled
     radius-versus-angle map that shows the hand.

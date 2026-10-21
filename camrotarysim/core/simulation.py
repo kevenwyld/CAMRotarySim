@@ -252,7 +252,7 @@ class Simulation:
         worst_removed = 0.0
         where_r = None
         excess = where = None
-        for p in pts:
+        for p in self._candidates(kin, op.tool, pts):
             c = kin.apply(self.stock, op.tool, p, self._max_radius)
             if c is None:
                 continue
@@ -289,6 +289,42 @@ class Simulation:
                 acc["excess"][better] = excess[better]
                 for j in np.nonzero(better)[0]:
                     acc["where"][j] = where[j]
+
+    CHUNK = 32
+
+    def _candidates(self, kin, tool, pts):
+        """
+        The samples that may touch material: chunks of samples are dropped
+        when the tool can't reach the stock anywhere in the columns the chunk
+        spans (e.g. rapids in and out of a drilled hole), checked in one go.
+        """
+        tool_frame = getattr(kin, "tool_frame", None)
+        if tool_frame is None or len(pts) <= 2:
+            yield from pts
+            return
+        st = self.stock
+        internal = getattr(tool, "internal", False)
+        sign = getattr(kin, "sign", 1.0)
+        for a in range(0, len(pts), self.CHUNK):
+            chunk = pts[a:a + self.CHUNK]
+            x = chunk[:, 0] - kin.axis.origin[0]
+            z = (chunk[:, 2] - kin.axis.origin[2]) * sign
+            if sign > 0:
+                lo, hi = z.min() + tool.zmin, z.max() + tool.zmax
+            else:
+                lo, hi = z.min() - tool.zmax, z.max() - tool.zmin
+            j0, j1 = st.column_range(lo, hi)
+            if j0 >= j1:
+                continue
+            wall = (st.R[:, j0:j1] - st.Rin[:, j0:j1]) > 0
+            if not wall.any():
+                continue
+            if internal:
+                if x.max() + tool.xmax <= st.Rin[:, j0:j1][wall].min():
+                    continue
+            elif x.min() + tool.xmin >= st.R[:, j0:j1][wall].max():
+                continue
+            yield from chunk
 
     def _collision(self, acc):
         """

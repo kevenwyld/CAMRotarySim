@@ -187,6 +187,27 @@ class TestHeadlessGui(unittest.TestCase):
         p.form.deleteLater()
         self.app.processEvents()
 
+    def test_task_panel_drilled_boring_job(self):
+        doc, job, ops = make_boring_doc(self.fake, with_drill=True)
+        self.fc.ActiveDocument = doc
+        from camrotarysim.gui.taskpanel import TaskPanel
+        p = TaskPanel(doc)
+        self.assertEqual([p.list_ops.item(i).checkState().name for i in range(p.list_ops.count())],
+                         ["Checked"] * 5)
+        p.on_play()
+        self.assertIsNotNone(p.sim, p.report.toPlainText())
+        self.assertEqual(p.spin_hole_d.value(), 0.0)    # Auto: no hole, the drill makes it
+        while p.timer.isActive():
+            p.on_tick()
+        text = p.report.toPlainText()
+        self.assertIn("no starting hole: drilled by TurnDrill", text)
+        self.assertIn("Events: none", text)
+        self.assertIn("pitch 19.949", text)
+        p.reject()
+        p.timer.deleteLater()
+        p.form.deleteLater()
+        self.app.processEvents()
+
 
 if __name__ == "__main__":
     unittest.main()
