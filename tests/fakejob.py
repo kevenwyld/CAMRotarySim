@@ -187,3 +187,48 @@ def make_boring_doc(fake, min_diameter=10.0, with_drill=False):
     doc = types.SimpleNamespace(Objects=list(objs.values()), findObjects=lambda t, n: [job],
                                 getObject=lambda name: objs.get(name))
     return doc, job, ops
+
+
+def make_rotary_doc(fake):
+    """
+    The indexed rotary Job (inexed_rotary_test.FCStd): three Adaptive ops on
+    work planes facing -Y, +Z and +Y, a 5 mm end mill, a box stock, machine
+    'tormach 4-axis' (A along X).
+    """
+    def load(fn):
+        with open(os.path.join(DATA, "rotary", fn)) as f:
+            return json.load(f)
+
+    q = lambda v: types.SimpleNamespace(Value=v)  # noqa: E731
+    spec = load("job.json")
+    lo, hi = spec["stock"]["lo"], spec["stock"]["hi"]
+    stock = types.SimpleNamespace(Name="Stock", Label="Stock", ViewObject=VO(), StockType="CreateBox",
+                                  Shape=fake.Shape([], fake.BoundBox(*lo, *hi)))
+    tris = load("part_triangles.json")["triangles"]
+    verts = [v for t in tris for v in t]
+    faces = [(3 * i, 3 * i + 1, 3 * i + 2) for i in range(len(tris))]
+    model = types.SimpleNamespace(Name="Clone", Label="Clone", ViewObject=VO(),
+                                  Shape=fake.Shape([], fake.BoundBox(*lo, *hi), mesh=(verts, faces)))
+    t = spec["tool"]
+    tool = types.SimpleNamespace(Name="Endmill", Label="Endmill", ShapeID="endmill", Shape=None,
+                                 Diameter=q(t["Diameter"]), Length=q(t["Length"]),
+                                 CuttingEdgeHeight=q(t["CuttingEdgeHeight"]))
+    tc = types.SimpleNamespace(Tool=tool, SpindleDir="Forward")
+    proxy = type("ObjectAdaptive", (), {"__module__": "Path.Op.Adaptive"})()
+    ops = []
+    for n in spec["order"]:
+        f = spec["frames"][n]
+        with open(os.path.join(DATA, "rotary", n + ".nc")) as fh:
+            cmds = [Cmd(c, p) for c, p in parse_gcode_text(fh.read())]
+        placement = types.SimpleNamespace(Base=fake.Vector(*f["position"]),
+                                          Rotation=types.SimpleNamespace(Q=tuple(f["quaternion"]), Angle=1.0))
+        ops.append(types.SimpleNamespace(Name=n, Label=n, Active=True, Visibility=True, ViewObject=VO(), Proxy=proxy,
+                                         ToolController=tc, Placement=placement,
+                                         Path=types.SimpleNamespace(Commands=cmds)))
+    job = types.SimpleNamespace(Name="Job", Label="Job", ViewObject=VO(), Stock=stock, Machine="tormach 4-axis",
+                                Model=types.SimpleNamespace(OutList=[model]),
+                                Operations=types.SimpleNamespace(OutList=ops))
+    objs = {o.Name: o for o in [job, stock, model] + ops}
+    doc = types.SimpleNamespace(Objects=list(objs.values()), findObjects=lambda t, n: [job],
+                                getObject=lambda name: objs.get(name))
+    return doc, job, ops

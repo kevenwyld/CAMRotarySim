@@ -10,12 +10,14 @@ import sys
 import types
 import unittest
 
+import numpy as np
+
 HERE = os.path.dirname(__file__)
 sys.path.insert(0, os.path.join(HERE, ".."))
 sys.path.insert(0, HERE)
 
 import fakefreecad  # noqa: E402
-from fakejob import make_boring_doc, make_doc, make_thread_doc  # noqa: E402
+from fakejob import make_boring_doc, make_doc, make_rotary_doc, make_thread_doc  # noqa: E402
 
 
 class TestAdapter(unittest.TestCase):
@@ -139,6 +141,30 @@ class TestAdapter(unittest.TestCase):
         other = types.SimpleNamespace(Proxy=object(), ToolController=drill.ToolController)
         self.assertTrue(fa.is_drill_op(other))
         self.assertFalse(fa.is_drill_op(ops[2]))
+
+    def test_milling_ops_and_frames(self):
+        import os
+        fakefreecad.sys.modules["Machine.models.machine"].MachineFactory.files = {
+            "tormach 4-axis": os.path.join(HERE, "data", "rotary", "tormach_4-axis.fcm")}
+        doc, job, ops = make_rotary_doc(fakefreecad)
+        fa = self.fa
+        self.assertTrue(all(fa.is_milling_op(o) for o in ops))
+        self.assertFalse(any(fa.is_turning_op(o) for o in ops))
+        letter, axis = fa.machine_rotary_axis(job)
+        self.assertEqual((letter, axis.direction, axis.limits), ("A", (1.0, 0.0, 0.0), (-120.0, 120.0)))
+        stock, inputs, part_phi, notes, info = fa.build_milling_inputs(job, ops, 1.0)
+        self.assertEqual([round(i.meta["angle"], 6) for i in inputs], [-90.0, 0.0, 90.0])
+        self.assertIn("Adaptive002: (0.000, 1.000, -0.000), A +90.0", info[2])
+        self.assertTrue(any("rotary axis A from machine 'tormach 4-axis'" in n for n in notes))
+        self.assertTrue(any("Endmill: flat end, diameter 5.000, cutting length 30.000" in n for n in notes))
+        self.assertEqual(part_phi.shape, stock.shape)
+        # the ops' own commands, local to their work plane: the Adaptive helix starts at local (0, -1.446)
+        tip, d = inputs[0].kinematics.to_workpiece((0.0, -1.44625, 5.0, 0, 0, 0))
+        np.testing.assert_allclose(d, [0, -1, 0], atol=1e-9)
+        np.testing.assert_allclose(tip, [25.0, -30.0, -1.51050519], atol=1e-6)
+        # without the machine: A along X assumed
+        fakefreecad.sys.modules["Machine.models.machine"].MachineFactory.files = {}
+        self.assertIsNone(fa.machine_rotary_axis(job))
 
     def test_side_property_fallback(self):
         op = types.SimpleNamespace(Proxy=object(), Side="Internal")

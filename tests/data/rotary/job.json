@@ -1,0 +1,79 @@
+{
+ "source": "inexed_rotary_test.FCStd",
+ "order": [
+  "Adaptive",
+  "Adaptive001",
+  "Adaptive002"
+ ],
+ "frames": {
+  "Adaptive": {
+   "position": [
+    25.0,
+    -24.999999999999996,
+    -0.0642551852475002
+   ],
+   "quaternion": [
+    0.7071067811865475,
+    0.0,
+    0.0,
+    0.7071067811865476
+   ]
+  },
+  "Adaptive001": {
+   "position": [
+    25.0,
+    2.7e-15,
+    25.0
+   ],
+   "quaternion": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ]
+  },
+  "Adaptive002": {
+   "position": [
+    24.43782341151335,
+    25.000000000000004,
+    -0.6263137727927983
+   ],
+   "quaternion": [
+    0.0,
+    0.7071067811865476,
+    0.7071067811865475,
+    0.0
+   ]
+  }
+ },
+ "workplanes": {
+  "Adaptive": "Workplane004",
+  "Adaptive001": "Workplane003",
+  "Adaptive002": "Workplane005"
+ },
+ "tool": {
+  "ShapeID": "endmill",
+  "Diameter": 5.0,
+  "Length": 50.0,
+  "CuttingEdgeHeight": 30.0,
+  "ShankDiameter": 3.0
+ },
+ "stock": {
+  "type": "CreateBox",
+  "lo": [
+   0.0,
+   -25.0,
+   -25.0
+  ],
+  "hi": [
+   80.0,
+   25.0,
+   25.0
+  ]
+ },
+ "ngc_A": {
+  "Adaptive": -90.0,
+  "Adaptive001": 0.0,
+  "Adaptive002": -90.0
+ }
+}

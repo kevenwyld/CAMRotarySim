@@ -7,6 +7,7 @@ PySide6.
 """
 
 import importlib
+import math
 
 import numpy as np
 import os
@@ -26,7 +27,7 @@ try:
 except ImportError:
     HAVE_QT = False
 
-from fakejob import make_boring_doc, make_doc, make_thread_doc  # noqa: E402
+from fakejob import make_boring_doc, make_doc, make_rotary_doc, make_thread_doc  # noqa: E402
 
 
 _APP = None
@@ -203,6 +204,41 @@ class TestHeadlessGui(unittest.TestCase):
         self.assertIn("no starting hole: drilled by TurnDrill", text)
         self.assertIn("Events: none", text)
         self.assertIn("pitch 19.949", text)
+        p.reject()
+        p.timer.deleteLater()
+        p.form.deleteLater()
+        self.app.processEvents()
+
+    def test_task_panel_rotary_job(self):
+        self.fake.sys.modules["Machine.models.machine"].MachineFactory.files = {
+            "tormach 4-axis": os.path.join(HERE, "data", "rotary", "tormach_4-axis.fcm")}
+        doc, job, ops = make_rotary_doc(self.fake)
+        self.fc.ActiveDocument = doc
+        from camrotarysim.gui.taskpanel import TaskPanel
+        p = TaskPanel(doc)
+        self.assertEqual([p.list_ops.item(i).checkState().name for i in range(p.list_ops.count())],
+                         ["Checked"] * 3)
+        p.spin_grid.setValue(1.0)          # coarse, for speed
+        p.on_play()
+        self.assertTrue(p.milling)
+        self.assertIsNotNone(p.sim, p.report.toPlainText())
+        angles = set()
+        while p.timer.isActive():
+            p.on_tick()
+            angles.add(round(p.milling_angle()[0], 6))
+        self.assertTrue(p.sim.done)
+        self.assertEqual(angles, {-90.0, 0.0, 90.0})        # the workpiece turned for each work plane
+        rot = p.scene.work_xf.rotation.value
+        self.assertAlmostEqual(rot[1], math.radians(90.0))   # last op: +Y face, A +90
+        text = p.report.toPlainText()
+        self.assertIn("Adaptive002: (0.000, 1.000, -0.000), A +90.0", text)
+        self.assertIn("Worst gouge: none", text)
+        self.assertIn("rotary axis A from machine 'tormach 4-axis'", text)
+        self.assertGreater(len(p.scene.stock_coords.point.values), 1000)
+        self.assertGreater(len(p.scene.partmesh_coords.point.values), 1000)
+        # the tool is drawn upright in the machine frame
+        self.assertEqual(p.scene.tool_xf.rotation.value[0][2], (0.0, 0.0, 1.0))
+        np.testing.assert_allclose(p.scene.tool_xf.rotation.value[0][1], (0.0, 0.0, 1.0), atol=1e-9)
         p.reject()
         p.timer.deleteLater()
         p.form.deleteLater()

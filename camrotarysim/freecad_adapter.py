@@ -304,3 +304,118 @@ def build_inputs(job, ops, ds, forward_right_hand=True, hole="auto"):
             stock.hole = (d, depth)
             notes.append("starting hole %.3f, %.3f deep (set in the panel)" % (d, depth))
     return stock, inputs, polylines, notes
+
+
+# ---------------------------------------------------------------- milling
+
+def is_milling_op(op):
+    """A CAM milling op (not a TurningAddon op), cutting with a milling tool."""
+    proxy = getattr(op, "Proxy", None)
+    if proxy is not None and type(proxy).__module__.startswith("PathTurnScripts"):
+        return False
+    tool = tool_of(op)
+    if tool is None or not hasattr(tool, "Diameter"):
+        return False
+    return tool_reference(tool) == REF_ORIGIN and not any(hasattr(tool, p) for p in ("TipRadius", "EdgeLength",
+                                                                                     "ProfileAngle", "Width"))
+
+
+def op_frame(op):
+    """(R, t) of the op's Placement: its work plane (world = Placement * local)."""
+    from .core.milling import placement_frame
+    pl = getattr(op, "Placement", None)
+    if pl is None:
+        return np.eye(3), np.zeros(3)
+    q = pl.Rotation.Q
+    b = pl.Base
+    return placement_frame((b.x, b.y, b.z), q)
+
+
+def machine_rotary_axis(job):
+    """
+    The Job's machine's rotary axis (CAM's MachineFactory, as the post
+    loads it): (letter, RotaryAxis), or None without one. The first by
+    sequence if there are several.
+    """
+    from .core.stock import RotaryAxis
+    name = getattr(job, "Machine", "") or ""
+    try:
+        from Machine.models.machine import MachineFactory
+        machine = MachineFactory.get_machine(name) if name else None
+    except Exception:
+        machine = None
+    axes = getattr(machine, "rotary_axes", None) or {}
+    if not axes:
+        return None
+    letter, ax = sorted(axes.items(), key=lambda kv: getattr(kv[1], "sequence", 0))[0]
+    v = ax.rotation_vector
+    return letter, RotaryAxis(tuple(getattr(ax, "joint_origin", (0, 0, 0)) or (0, 0, 0)), (v.x, v.y, v.z), letter,
+                              (float(ax.min_limit), float(ax.max_limit)),
+                              {"allow_flip": getattr(ax, "allow_flip", None)})
+
+
+def shape_triangles(shape, deflection=0.05):
+    pts, tris = shape.tessellate(deflection)
+    P = np.array([(p.x, p.y, p.z) for p in pts])
+    return P[np.asarray(tris, dtype=int)] if len(tris) else np.zeros((0, 3, 3))
+
+
+def build_milling_inputs(job, ops, h=0.5):
+    """
+    (VoxelStock, [OpInput], part SDF grid or None, notes, per-op info lines)
+    for milling ops. Commands are the ops' own (local to their work plane);
+    each op's MillingKinematics carries its frame, so arcs stay arcs in
+    their plane: CAM's applyPlacementToPath leaves arcs it tilts out of XY
+    as they are, which is wrong for work planes on the sides.
+    """
+    from .core.milling import MillingKinematics, MillTool, VoxelStock, needed_angle
+    from .core.simulation import OpInput
+    from .core.stock import RotaryAxis
+    from .core.surface import mesh_sdf
+    notes, info = [], []
+    found = machine_rotary_axis(job)
+    if found:
+        letter, axis = found
+        notes.append("rotary axis %s from machine '%s': along (%g, %g, %g) through (%g, %g, %g), limits %g to %g"
+                     % ((letter, job.Machine) + axis.direction + axis.origin + axis.limits))
+    else:
+        letter, axis = "A", RotaryAxis(direction=(1.0, 0.0, 0.0))
+        notes.append("no rotary axis in the Job's machine: A along X through the origin assumed")
+    stock_shape = job.Stock.Shape
+    bb = stock_shape.BoundBox
+    lo, hi = (bb.XMin, bb.YMin, bb.ZMin), (bb.XMax, bb.YMax, bb.ZMax)
+    if str(getattr(job.Stock, "StockType", "")) == "CreateBox" and stock_shape.Placement.Rotation.Angle < 1e-9:
+        stock = VoxelStock.from_box(lo, hi, h, axis)
+    else:
+        tris = shape_triangles(stock_shape)
+        stock = VoxelStock.from_sdf(lo, hi, h, lambda g: mesh_sdf(g.lo, g.h, g.shape, tris), axis)
+    inputs, cache = [], {}
+    for op in ops:
+        tool = tool_of(op)
+        if tool is None:
+            notes.append("%s has no tool controller; skipped" % op.Label)
+            continue
+        if tool.Name not in cache:
+            length = _value(getattr(tool, "CuttingEdgeHeight", 0)) or _value(getattr(tool, "Length", 0)) or 25.0
+            cache[tool.Name] = MillTool.from_cam(getattr(tool, "ShapeID", ""), _value(tool.Diameter), length,
+                                                 "%s" % tool.Label)
+            notes.append("%s: %s end, diameter %.3f, cutting length %.3f%s" % (
+                tool.Label, cache[tool.Name].kind, 2 * cache[tool.Name].radius, cache[tool.Name].length,
+                cache[tool.Name].source[len(tool.Label):]))
+        R, t = op_frame(op)
+        angle, err = needed_angle(R[:, 2], axis.direction)
+        lim = axis.limits
+        line = "%s: (%.3f, %.3f, %.3f), %s %+.1f" % ((op.Label,) + tuple(R[:, 2]) + (letter, angle))
+        if err > 1e-6:
+            line += "; not reachable with %s alone (%.3f off)" % (letter, err)
+        elif not lim[0] <= angle <= lim[1]:
+            line += "; outside %s's limits %g to %g" % (letter, lim[0], lim[1])
+        info.append(line)
+        cmds = [(c.Name, dict(c.Parameters)) for c in op.Path.Commands]
+        inputs.append(OpInput(op.Label, cmds, cache[tool.Name], kinematics=MillingKinematics(axis, (R, t), letter),
+                              meta={"angle": angle, "letter": letter}))
+    model = model_shape(job)
+    part_phi = None
+    if model is not None:
+        part_phi = mesh_sdf(stock.lo, stock.h, stock.shape, shape_triangles(model))
+    return stock, inputs, part_phi, notes, info

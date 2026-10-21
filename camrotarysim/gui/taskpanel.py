@@ -15,7 +15,9 @@ from PySide import QtCore, QtGui
 
 from .. import freecad_adapter as fa
 from ..core import compare, thread_check
+from ..core import milling
 from ..core.mesh import bore_colours, column_colours, revolve
+from ..core.surface import surface_nets
 from ..core.report import format_report
 from ..core.simulation import Simulation
 from .view import SimScene, outline_prism
@@ -58,6 +60,9 @@ class TaskPanel:
         self.mesh_time = 0.0
         self.zones = []
         self.threads = []
+        self.milling = False
+        self.part_phi = None
+        self.op_info = []
         self.speed_index = min(self.prefs.GetInt("SpeedIndex", 1), len(SPEEDS) - 1)
         self.timer = QtCore.QTimer()
         self.timer.setInterval(TICK_MS)
@@ -135,6 +140,12 @@ class TaskPanel:
             row_hole.addWidget(widget)
         grid.addWidget(QtGui.QLabel(translate("Starting hole")), 5, 0)
         grid.addLayout(row_hole, 5, 1)
+        self.spin_grid = self._spin(0.1, 5.0, self.prefs.GetFloat("MillingGrid", 0.5), 2, 0.1)
+        self.spin_grid.setToolTip(translate("Milling: spacing of the stock's distance grid (finer: slower, "
+                                            "sharper edges; faces are accurate well below it)"))
+        self.spin_grid.valueChanged.connect(self.mark_dirty)
+        grid.addWidget(QtGui.QLabel(translate("Milling grid")), 6, 0)
+        grid.addWidget(self.spin_grid, 6, 1)
         self.on_hole_changed()
         lay.addLayout(grid)
 
@@ -246,11 +257,11 @@ class TaskPanel:
             for op in ops:
                 item = QtGui.QListWidgetItem(_icon(op), op.Label)
                 item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-                turning = fa.is_turning_op(op)
+                turning = fa.is_turning_op(op) or fa.is_milling_op(op)
                 on = turning and not (self.follow_vis.isChecked() and not op.Visibility and not allhidden)
                 item.setCheckState(QtCore.Qt.CheckState.Checked if on else QtCore.Qt.CheckState.Unchecked)
                 if not turning:
-                    item.setToolTip(translate("Not a turning operation: milling ops are not simulated yet"))
+                    item.setToolTip(translate("Neither a turning nor a milling operation this simulator knows"))
                 item.setData(QtCore.Qt.ItemDataRole.UserRole, op.Name)
                 self.list_ops.addItem(item)
         self.list_ops.blockSignals(False)
@@ -281,7 +292,18 @@ class TaskPanel:
             self.report.setPlainText(translate("Select a Job and at least one operation."))
             return False
         self.prefs.SetFloat("Resolution", self.spin_res.value())
+        mill = [op for op in ops if fa.is_milling_op(op)]
+        self.milling = bool(mill)
+        if mill and len(mill) != len(ops):
+            self.report.setPlainText(translate(
+                "Turning and milling ops can't be simulated together yet: select one kind."))
+            return False
         QtGui.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        if self.milling:
+            try:
+                return self.build_milling(job, ops)
+            finally:
+                QtGui.QApplication.restoreOverrideCursor()
         try:
             ds = self.spin_res.value()
             right = self.combo_hand.currentIndex() == 0
@@ -332,6 +354,79 @@ class TaskPanel:
             QtGui.QApplication.restoreOverrideCursor()
         self.update_all()
         return True
+
+    def build_milling(self, job, ops):
+        """Milling ops (indexed or rotary): a distance-grid stock in the workpiece frame."""
+        try:
+            h = self.spin_grid.value()
+            self.prefs.SetFloat("MillingGrid", h)
+            stock, inputs, part_phi, notes, info = fa.build_milling_inputs(job, ops, h)
+            self.sim = Simulation(stock, inputs, step=min(0.25, h / 2))
+            self.notes, self.op_info, self.part_phi = notes, info, part_phi
+            self.zones, self.threads = [], []
+            self.tool_meshes = {}
+            for i, op in enumerate(ops):
+                self.tool_meshes[i] = self._mill_tool_mesh(fa.tool_of(op), inputs[i].tool)
+            if self.scene is None:
+                self.scene = SimScene(FreeCADGui.ActiveDocument.ActiveView)
+                self._hide_job(job)
+            self.scene.set_path(self._world_path())
+            self.scene.set_part_section([])
+            model = fa.model_shape(job)
+            if model is not None:
+                tris = fa.shape_triangles(model)
+                v = tris.reshape(-1, 3)
+                self.scene.set_part_mesh(v, np.arange(len(v)).reshape(-1, 3))
+            self.current_tool_op = None
+            self.dirty = False
+        except Exception as e:
+            FreeCAD.Console.PrintError("CAMRotarySim: %s\n" % e)
+            self.report.setPlainText(translate("Could not build the simulation:") + "\n%s" % e)
+            self.sim = None
+            return False
+        self.update_all()
+        return True
+
+    def _world_path(self):
+        """The path in the workpiece frame (each op through its own frame)."""
+        out = []
+        for kind, op, pts in self.sim.path_polylines():
+            kin = self.sim.ops[op].kinematics
+            full = np.zeros((len(pts), 6))
+            full[:, :3] = pts
+            out.append((kind, op, np.array([kin.to_workpiece(p)[0] for p in full])))
+        return out
+
+    @staticmethod
+    def _mill_tool_mesh(tool, mill_tool):
+        """A milling tool's solid (CAM shapes: tip at the origin, axis +Z), or a cylinder."""
+        try:
+            shape = tool.Shape.copy()
+            shape.Placement = FreeCAD.Placement()
+            pts, tris = shape.tessellate(0.05)
+            if pts and tris:
+                return np.array([(p.x, p.y, p.z) for p in pts]), np.array(tris), (0.0, 0.0)
+        except Exception:
+            pass
+        n = 24
+        a = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        r, L = mill_tool.radius, mill_tool.length
+        v = np.array([(r * np.cos(t), r * np.sin(t), z) for z in (0.0, L) for t in a] + [(0, 0, 0), (0, 0, L)])
+        i = np.arange(n)
+        j = (i + 1) % n
+        tris = np.vstack([np.stack([i, j, n + j], 1), np.stack([i, n + j, n + i], 1),
+                          np.stack([np.full(n, 2 * n), j, i], 1), np.stack([np.full(n, 2 * n + 1), n + i, n + j], 1)])
+        return v, tris, (0.0, 0.0)
+
+    def milling_angle(self):
+        """The rotary angle the machine is at: the current op's (its plane's) plus any rotary word."""
+        m = self.sim.current_move
+        if m is None:
+            return 0.0, None
+        inp = self.sim.ops[m.op]
+        kin = inp.kinematics
+        word = float(self.sim.position[kin.index]) if self.sim.position is not None else 0.0
+        return float(inp.meta.get("angle", 0.0)) + word, kin
 
     @staticmethod
     def _tool_mesh(tool, outline, internal=False):
@@ -478,6 +573,12 @@ class TaskPanel:
             return
         st = self.sim.stock
         dev = self.chk_dev.isChecked()
+        if self.milling:
+            v, t = surface_nets(st.phi, st.lo, st.h)
+            c = milling.vertex_colours(st, v, self.part_phi if dev else None, self.spin_gouge.value(),
+                                       self.spin_uncut.value())
+            self.scene.set_stock_mesh(v, t, c)
+            return
         res = self.comparison() if dev else None
         bore = self.bore_comparison() if dev else None
         outer_v, inner_v = (), ()
@@ -499,6 +600,15 @@ class TaskPanel:
             v, t, _c = self.tool_meshes[op]
             self.scene.set_tool_mesh(v, t)
             self.current_tool_op = op
+        if self.milling:
+            angle, kin = self.milling_angle()
+            tip, d = kin.to_workpiece(np.asarray(sim.position, dtype=float))
+            ax = kin.axis
+            M = milling.rotation_matrix(ax.direction, angle)
+            o = np.asarray(ax.origin)
+            self.scene.set_workpiece_rotation(ax.direction, ax.origin, angle)
+            self.scene.set_tool_pose(M @ (tip - o) + o, M @ d)
+            return
         self.scene.set_tool_position(sim.position, self.tool_meshes[op][2])
         self.scene.set_spindle_angle(sim.spindle_angle)
 
@@ -508,14 +618,21 @@ class TaskPanel:
         self.slider.setValue(int(round(1000 * sim.progress)))
         self.slider.blockSignals(False)
         m = sim.current_move
-        if m is not None:
+        if m is not None and self.milling:
+            angle, kin = self.milling_angle()
+            p = sim.position
+            self.lbl_status.setText("%s  #%d  X %.3f  Y %.3f  Z %.3f  %s %.1f" % (
+                sim.ops[m.op].name, m.index, p[0], p[1], p[2], kin.letter, angle))
+        elif m is not None:
             self.lbl_status.setText("%s  #%d  X %.3f  Z %.3f" % (
                 sim.ops[m.op].name, m.index, sim.position[0], sim.position[2]))
 
     def update_visibility(self, *_):
         if self.scene is not None:
+            part = self.chk_part.isChecked()
+            mill = bool(getattr(self, "milling", False))
             self.scene.show(self.chk_stock.isChecked(), self.chk_tool.isChecked(),
-                            self.chk_path.isChecked(), self.chk_part.isChecked())
+                            self.chk_path.isChecked(), part and not mill, part and mill)
 
     def update_result(self, *_):
         if self.sim is not None:
@@ -524,6 +641,18 @@ class TaskPanel:
 
     def update_report(self):
         if self.sim is None:
+            return
+        if self.milling:
+            cmp = None
+            if self.part_phi is not None:
+                cmp = milling.compare_part(self.sim.stock, self.part_phi, self.spin_gouge.value(),
+                                           self.spin_uncut.value())
+            text = milling.format_milling(self.sim, cmp, self.op_info)
+            text += "\n\nSetup:\n" + "\n".join("  " + n for n in self.notes)
+            text += ("\n\nNotes: the angles are what each op's work plane needs, solved here; compare "
+                     "them with the posted program. Edges are drawn chamfered by up to a third of the grid; "
+                     "the check is on the grid, where it isn't.")
+            self.report.setPlainText(text)
             return
         threads = self.measure_threads() if self.zones else None
         text = format_report(self.sim, self.comparison(), self.part_R, self.part_neg, threads=threads,

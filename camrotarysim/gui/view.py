@@ -5,6 +5,8 @@ stock mesh (vertex colours), tool (tessellated tool solid or outline
 prism), tool path and the part's section outline.
 """
 
+import math
+
 import numpy as np
 from pivy import coin
 
@@ -14,6 +16,7 @@ RAPID_COLOUR = (0.9, 0.3, 0.3)
 FEED_COLOUR = (0.2, 0.6, 1.0)
 PART_COLOUR = (0.1, 0.1, 0.1)
 TOOL_COLOUR = (0.85, 0.65, 0.2)
+PART_GHOST_COLOUR = (0.3, 0.3, 0.35)
 
 
 def _switch(child, on=True):
@@ -73,8 +76,24 @@ class SimScene:
         # path and part section
         self.path_sw, self.path_nodes = self._lines_node(1.0)
         self.part_sw, self.part_nodes = self._lines_node(2.0)
-        for sw in (self.stock_sw, self.tool_sw, self.path_sw, self.part_sw):
-            self.root.addChild(sw)
+        # the part as a see-through mesh (milling)
+        sep = coin.SoSeparator()
+        mat = coin.SoMaterial()
+        mat.diffuseColor = PART_GHOST_COLOUR
+        mat.transparency = 0.75
+        self.partmesh_coords = coin.SoCoordinate3()
+        self.partmesh_faces = coin.SoIndexedFaceSet()
+        for n in (mat, self.partmesh_coords, self.partmesh_faces):
+            sep.addChild(n)
+        self.partmesh_sw = _switch(sep, False)
+        # the workpiece (stock, path, part) turns by the rotary angle about its axis (milling)
+        self.work = coin.SoSeparator()
+        self.work_xf = coin.SoTransform()
+        self.work.addChild(self.work_xf)
+        for sw in (self.stock_sw, self.path_sw, self.part_sw, self.partmesh_sw):
+            self.work.addChild(sw)
+        self.root.addChild(self.work)
+        self.root.addChild(self.tool_sw)
         view.getSceneGraph().addChild(self.root)
 
     @staticmethod
@@ -109,6 +128,24 @@ class SimScene:
         """Rotate the displayed workpiece by angle (rad) about the Z axis."""
         self.stock_rot.rotation.setValue(coin.SbVec3f(0.0, 0.0, 1.0), float(angle))
 
+    def set_workpiece_rotation(self, axis, origin, angle_deg):
+        """Turn the workpiece (stock, path, part) by angle about the rotary axis through origin."""
+        self.work_xf.rotation.setValue(coin.SbVec3f(*map(float, axis)), math.radians(float(angle_deg)))
+        self.work_xf.center.setValue(*map(float, origin))
+
+    def set_tool_pose(self, tip, tool_axis, control_in_shape=(0.0, 0.0)):
+        """Tool (a CAM shape: tip at its origin, axis +Z) at tip, along tool_axis (machine frame)."""
+        rot = coin.SbRotation(coin.SbVec3f(0.0, 0.0, 1.0), coin.SbVec3f(*map(float, tool_axis)))
+        self.tool_xf.rotation.setValue(rot)
+        self.tool_xf.translation.setValue(*map(float, tip))
+
+    def set_part_mesh(self, verts, tris):
+        self.partmesh_coords.point.setNum(len(verts))
+        self.partmesh_coords.point.setValues(0, len(verts), np.asarray(verts).tolist())
+        idx = _faces_index(np.asarray(tris))
+        self.partmesh_faces.coordIndex.setNum(len(idx))
+        self.partmesh_faces.coordIndex.setValues(0, len(idx), idx)
+
     def set_tool_mesh(self, verts, tris):
         """Tool geometry in tool-shape coordinates (control point at control_in_shape)."""
         self.tool_coords.point.setNum(len(verts))
@@ -142,8 +179,9 @@ class SimScene:
         pls = [[(x, 0.0, z) for x, z in pl] for pl in polylines if len(pl) >= 2]
         self._set_lines(self.part_nodes, pls, [PART_COLOUR] * len(pls))
 
-    def show(self, stock=None, tool=None, path=None, part=None):
-        for sw, on in ((self.stock_sw, stock), (self.tool_sw, tool), (self.path_sw, path), (self.part_sw, part)):
+    def show(self, stock=None, tool=None, path=None, part=None, part_mesh=None):
+        for sw, on in ((self.stock_sw, stock), (self.tool_sw, tool), (self.path_sw, path), (self.part_sw, part),
+                       (self.partmesh_sw, part_mesh)):
             if on is not None:
                 _set_on(sw, on)
 

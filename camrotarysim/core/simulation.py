@@ -58,7 +58,11 @@ class Simulation:
         self.rapid_tol = rapid_tol
         self.collision_tol = collision_tol
         self.parting_min_radius = parting_min_radius
-        self.default_kinematics = kinematics or TurningKinematics(stock.axis)
+        # turning by default; milling ops bring their own (MillingKinematics, with their frame)
+        self.turning = hasattr(stock, "R")
+        if kinematics is None and self.turning:
+            kinematics = TurningKinematics(stock.axis)
+        self.default_kinematics = kinematics
 
         interp = MotionInterpreter(MotionState())
         self.moves = []
@@ -79,7 +83,7 @@ class Simulation:
         counts = np.array([len(s) for s in self._samples], dtype=np.int64)
         self._offsets = np.concatenate([[0], np.cumsum(counts)])
         self.total_samples = int(self._offsets[-1])
-        self._max_radius = float(stock.R.max())
+        self._max_radius = float(stock.R.max()) if self.turning else math.inf
         self._initial = stock.snapshot()
         self.reset()
 
@@ -246,9 +250,10 @@ class Simulation:
         pts = self._samples[mi][first:last]
         if first == 0 or getattr(self, "_move_start_index", None) != mi:
             # the stock when the move began: a rapid's cut is measured against it
-            self._move_start = (self.stock.profile(), self.stock.inner_profile())
+            self._move_start = ((self.stock.profile(), self.stock.inner_profile())
+                                if self.turning else None)
             self._move_start_index = mi
-        start_prof = self._move_start if move.kind == RAPID else None
+        start_prof = self._move_start if move.kind == RAPID and self.turning else None
         worst_removed = 0.0
         where_r = None
         excess = where = None
@@ -298,6 +303,13 @@ class Simulation:
         when the tool can't reach the stock anywhere in the columns the chunk
         spans (e.g. rapids in and out of a drilled hole), checked in one go.
         """
+        may_touch = getattr(kin, "may_touch", None)
+        if may_touch is not None:      # milling: a box test per chunk
+            for a in range(0, len(pts), self.CHUNK):
+                chunk = pts[a:a + self.CHUNK]
+                if may_touch(self.stock, tool, chunk):
+                    yield from chunk
+            return
         tool_frame = getattr(kin, "tool_frame", None)
         if tool_frame is None or len(pts) <= 2:
             yield from pts
@@ -364,7 +376,7 @@ class Simulation:
                     ("stock %.3f mm inside the insert's back: the boring bar would collide"
                      if self.ops[move.op].internal
                      else "stock %.3f mm above the insert's top: holder would collide") % depth))
-        if not any(e.kind == "parted" for e in self.events):
+        if self.turning and not any(e.kind == "parted" for e in self.events):
             prof = self.stock.profile()
             gone = self.stock.material() <= 1e-3
             if gone.any():

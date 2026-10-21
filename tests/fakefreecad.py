@@ -23,7 +23,9 @@ class Vector:
 
 
 class Placement:
-    pass
+    def __init__(self):
+        self.Rotation = types.SimpleNamespace(Angle=0.0, Q=(0.0, 0.0, 0.0, 1.0))
+        self.Base = Vector()
 
 
 class BoundBox:
@@ -180,6 +182,7 @@ def make_coin():
     coin.SoLightModel = type("SoLightModel", (Node,), {"BASE_COLOR": 0})
     coin.SoMaterialBinding = type("SoMaterialBinding", (Node,), {"PER_VERTEX_INDEXED": 5, "PER_PART": 1})
     coin.SbVec3f = lambda *v: tuple(v)
+    coin.SbRotation = lambda a, b: ("rotation", a, b)
     coin.SO_SWITCH_ALL = -3
     coin.SO_SWITCH_NONE = -1
     return coin
@@ -247,6 +250,35 @@ def install():
     pu.getPathWithPlacement = lambda op: op.Path
     ps.PathUtils = pu
     sys.modules.update({"PathScripts": ps, "PathScripts.PathUtils": pu})
+
+    # CAM's machine models: MachineFactory.get_machine(name) from the .fcm fixtures
+    mach = types.ModuleType("Machine")
+    models = types.ModuleType("Machine.models")
+    mm = types.ModuleType("Machine.models.machine")
+
+    class MachineFactory:
+        files = {}
+
+        @classmethod
+        def get_machine(cls, name):
+            import json
+            path = cls.files.get(name.lower())
+            if path is None:
+                raise FileNotFoundError(name)
+            with open(path) as f:
+                data = json.load(f)["machine"]
+            axes = {}
+            for n, a in data["axes"].items():
+                if a.get("type") == "rotary":
+                    o, d = a["joint"]
+                    axes[n] = types.SimpleNamespace(rotation_vector=Vector(*d), joint_origin=list(o),
+                                                    min_limit=a["limits"]["min"], max_limit=a["limits"]["max"],
+                                                    sequence=a.get("sequence", 0), allow_flip=a.get("allow_flip"))
+            return types.SimpleNamespace(name=data["name"], rotary_axes=axes)
+
+    mm.MachineFactory = MachineFactory
+    mach.models, models.machine = models, mm
+    sys.modules.update({"Machine": mach, "Machine.models": models, "Machine.models.machine": mm})
 
     pivy = types.ModuleType("pivy")
     pivy.coin = make_coin()

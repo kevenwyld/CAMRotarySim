@@ -75,6 +75,42 @@ toolbar. Minimum FreeCAD 1.1. Requires numpy, which CAM already uses.
    - **Path diagnostics:** arc radius mismatches, zero feed rates,
      unsupported commands.
 
+## Milling (indexed and rotary)
+
+CAM milling ops (Adaptive, Pocket, Profile and so on) are simulated in the
+workpiece frame, on a stock that can be cut from any direction.
+
+**Frames.** Each op's commands are taken as stored, local to its work plane,
+and placed by the op's Placement: world = Placement × local, with the tool
+axis along Placement × Z. This is how CAM's post reads them. CAM's
+`applyPlacementToPath` is not used, because it leaves arcs tilted out of XY
+as they are, which is wrong on side work planes. A rotary word (A, B or C) in
+a command turns the workpiece: the tool is placed at R(axis, −angle) × world
+(CAM's `compute_rotation_matrix`).
+
+**Rotary angle.** For each op the report gives the angle that turns its work
+plane's normal to +Z. The 3D view turns the part by that angle, with the tool
+upright, as on the machine. Compare these angles with the posted program.
+
+**Rotary axis.** Taken from the Job's machine through CAM's
+`MachineFactory`; without one, A along X through the origin is assumed.
+
+**Stock.** A signed-distance grid (the **Milling grid** setting, 0.5 mm by
+default) in place of the turning model, which can't represent walls that
+aren't radial.
+- Each cutter position is subtracted exactly.
+- The surface is drawn at sub-grid accuracy; sharp edges are chamfered by up
+  to a third of the grid.
+- Box stock is exact; other stock comes from its tessellation.
+
+**Check.** On the grid against the model's tessellation:
+- **Gouge:** cut where the model has material.
+- **Left:** material beyond the model, measured exactly up to 3 grid spacings.
+
+**Tools.** Flat end mills, and ball end mills (ShapeID `ballend`). Other
+shapes are treated as flat, and the report says so. The cutting length is
+CuttingEdgeHeight.
+
 ## Inputs and conventions
 
 These were verified against source and the sample Job, not assumed:
@@ -189,6 +225,12 @@ These were verified against source and the sample Job, not assumed:
   - The tool is taken as a flat profile in the XZ plane, ignoring the helix's
     lead angle.
   - The thread hand is a setting.
+- **Milling:**
+  - Turning and milling ops can't be simulated together yet.
+  - Shanks and holders are not checked for collisions.
+  - Cutters other than flat and ball are approximated.
+  - Continuous rotary moves (rotary words while cutting) are supported but
+    haven't been tested on a real op.
 - **Accuracy:** depends on the resolution (column spacing and sample step,
   default 0.05 mm).
 - **Parting:** reported when a column reaches the axis with substantial
@@ -200,8 +242,8 @@ These were verified against source and the sample Job, not assumed:
     python3 -m unittest discover -s tests
 
 - **Core:** pure tests, plus end-to-end runs of the sample Jobs (fixtures
-  extracted from `turning_test2.FCStd`, `threading_test.FCStd` and
-  `boring_test.FCStd`).
+  extracted from `turning_test2.FCStd`, `threading_test.FCStd`,
+  `boring_test.FCStd` and `inexed_rotary_test.FCStd`).
 - **FreeCAD side:** `tests/test_adapter.py` and `tests/test_gui_headless.py`
   run the adapter, task panel, Coin scene and command registration. They use
   stub FreeCAD modules (`tests/fakefreecad.py`), a fake Job built from the
@@ -213,6 +255,8 @@ These were verified against source and the sample Job, not assumed:
   - `devtools/make_partoff_guess.py` builds the Partoff fixtures with LibLathe.
   - `devtools/make_drill_fixture.py` builds the Turn Drill fixtures by running
     the TurningAddon's own `op_generate_gcode()`.
+  - `devtools/run_rotary_job.py --out DIR` runs the indexed rotary Job and
+    plots sections through each machined face against the model.
   - `devtools/run_thread_job.py --out DIR` runs the thread Job and plots an
     axial section against the ISO basic profile, plus an unrolled
     radius-versus-angle map that shows the hand.
