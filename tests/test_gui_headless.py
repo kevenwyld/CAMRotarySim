@@ -219,8 +219,9 @@ class TestHeadlessGui(unittest.TestCase):
         self.assertEqual([p.list_ops.item(i).checkState().name for i in range(p.list_ops.count())],
                          ["Checked"] * 3)
         p.spin_grid.setValue(1.0)          # coarse, for speed
+        from camrotarysim.gui.taskpanel import SPEEDS
         p.change_speed(-10)
-        p.change_speed(2)                  # x5: rotary moves at 15 degrees per tick
+        p.change_speed(SPEEDS.index(5))    # x5: rotary moves at 15 degrees per tick
         self.assertEqual(p.lbl_speed.text(), "x5")
         p.on_play()
         self.assertTrue(p.milling)
@@ -250,6 +251,57 @@ class TestHeadlessGui(unittest.TestCase):
         # the tool is drawn upright in the machine frame
         np.testing.assert_allclose(p.scene.tool_xf.rotation.value[0][2], (0.0, 0.0, 1.0), atol=1e-9)
         np.testing.assert_allclose(p.scene.tool_xf.rotation.value[0][1], (0.0, 0.0, 1.0), atol=1e-9)
+        p.reject()
+        p.timer.deleteLater()
+        p.form.deleteLater()
+        self.app.processEvents()
+
+    def test_slow_speeds(self):
+        doc, job, stock, model = make_doc(self.fake)
+        self.fc.ActiveDocument = doc
+        from camrotarysim.gui.taskpanel import SAMPLES_PER_TICK, SPEEDS, TaskPanel
+        p = TaskPanel(doc)
+        self.assertTrue(p.build())
+        p.change_speed(-10)
+        self.assertEqual(p.lbl_speed.text(), "x0.25")
+        # x0.25: a quarter of x1's samples per tick
+        ticks = [p._tick_samples() for _ in range(8)]
+        self.assertEqual(sum(ticks), 8 * SAMPLES_PER_TICK // 4)
+        p.change_speed(1)
+        self.assertEqual(p.lbl_speed.text(), "x0.5")
+        self.assertEqual(sum(p._tick_samples() for _ in range(8)), 8 * SAMPLES_PER_TICK // 2)
+        # the speed is saved as a value, so a stored x5 stays x5 whatever the list of steps
+        p.change_speed(SPEEDS.index(5) - SPEEDS.index(0.5))
+        p.reject()
+        self.assertEqual(self.fc.ParamGet("User parameter:BaseApp/Preferences/Mod/CAMRotarySim").GetFloat("Speed", 0.0),
+                         5.0)
+        p2 = TaskPanel(doc)
+        self.assertEqual(p2.lbl_speed.text(), "x5")
+        p2.reject()
+        for panel in (p, p2):
+            panel.timer.deleteLater()
+            panel.form.deleteLater()
+        self.app.processEvents()
+
+    def test_slow_rotary_index(self):
+        self.fake.sys.modules["Machine.models.machine"].MachineFactory.files = {
+            "tormach 4-axis": os.path.join(HERE, "data", "rotary", "tormach_4-axis.fcm")}
+        doc, job, ops = make_rotary_doc(self.fake)
+        self.fc.ActiveDocument = doc
+        from camrotarysim.gui.taskpanel import TaskPanel
+        p = TaskPanel(doc)
+        p.spin_grid.setValue(2.0)
+        self.assertTrue(p.build())
+        p.change_speed(-10)                # x0.25
+        # move to the first index (0 to -90): 90 one-degree samples
+        mi = next(i for i, m in enumerate(p.sim.moves) if p._turns(m))
+        p.sim.seek(int(p.sim._offsets[mi]))
+        done = 0
+        for _ in range(40):
+            n = p._tick_samples()
+            p.sim.advance(n)
+            done += n
+        self.assertEqual(done, 30)         # 0.75 degree per tick on average
         p.reject()
         p.timer.deleteLater()
         p.form.deleteLater()

@@ -23,7 +23,8 @@ from ..core.simulation import Simulation
 from .view import SimScene, outline_prism
 
 PREFS = "User parameter:BaseApp/Preferences/Mod/CAMRotarySim"
-SPEEDS = (1, 2, 5, 10, 25, 50)       # the CAM simulator's speed steps (GuiDisplay.cpp)
+# the CAM simulator's speed steps (GuiDisplay.cpp), with 0.25 and 0.5 for short paths
+SPEEDS = (0.25, 0.5, 1, 2, 5, 10, 25, 50)
 SAMPLES_PER_TICK = 20                # at speed 1
 ROTARY_DEG_PER_TICK = 3              # at speed 1: rotary moves are animated
 TICK_MS = 40
@@ -65,7 +66,10 @@ class TaskPanel:
         self.milling = False
         self.part_phi = None
         self.op_info = []
-        self.speed_index = min(self.prefs.GetInt("SpeedIndex", SPEEDS.index(5)), len(SPEEDS) - 1)
+        # stored as the speed itself, so adding steps doesn't change what a saved setting means
+        saved = self.prefs.GetFloat("Speed", 5.0)
+        self.speed_index = min(range(len(SPEEDS)), key=lambda i: abs(SPEEDS[i] - saved))
+        self._budget = 0.0      # fractional samples carried between ticks (speeds below 1)
         self.timer = QtCore.QTimer()
         self.timer.setInterval(TICK_MS)
         self.timer.timeout.connect(self.on_tick)
@@ -501,7 +505,7 @@ class TaskPanel:
         self.hidden = []
         self.prefs.SetFloat("GougeTolerance", self.spin_gouge.value())
         self.prefs.SetFloat("UncutTolerance", self.spin_uncut.value())
-        self.prefs.SetInt("SpeedIndex", self.speed_index)
+        self.prefs.SetFloat("Speed", float(SPEEDS[self.speed_index]))
 
     def ensure_built(self):
         return (not self.dirty and self.sim is not None) or self.build()
@@ -545,22 +549,34 @@ class TaskPanel:
 
     def _tick_samples(self):
         """
-        Samples for one tick. A rotary move (an index between work planes)
-        is one sample per degree; it goes at ROTARY_DEG_PER_TICK x the speed,
-        so it is seen turning, and a tick stops where one begins.
+        Samples for one tick: SAMPLES_PER_TICK x the speed. A rotary move
+        (an index between work planes) is one sample per degree; it goes at
+        ROTARY_DEG_PER_TICK x the speed, so it is seen turning, and a tick
+        stops where one begins. Fractions carry over to the next tick, so
+        speeds below 1 keep their rate (x0.25: 5 samples a tick, a rotary
+        index 0.75 degree a tick on average).
         """
         speed = SPEEDS[self.speed_index]
-        n = speed * SAMPLES_PER_TICK
         sim = self.sim
-        if not sim.moves or sim.done:
+        rate = speed * SAMPLES_PER_TICK
+        mi = sim.move_at(sim.cursor) if sim.moves and not sim.done else None
+        turning = mi is not None and self._turns(sim.moves[mi])
+        if turning:
+            rate = min(rate, speed * ROTARY_DEG_PER_TICK)
+        self._budget += rate
+        n = int(self._budget)
+        if n < 1:
+            return 0
+        self._budget -= n
+        if mi is None:
             return n
-        mi = sim.move_at(sim.cursor)
         offsets = sim._offsets
-        if self._turns(sim.moves[mi]):
-            return max(1, min(n, speed * ROTARY_DEG_PER_TICK, int(offsets[mi + 1]) - sim.cursor))
+        if turning:
+            return min(n, int(offsets[mi + 1]) - sim.cursor)
         j = mi + 1
         while j < len(sim.moves) and int(offsets[j]) < sim.cursor + n:
             if self._turns(sim.moves[j]):
+                self._budget = 0.0
                 return max(1, int(offsets[j]) - sim.cursor)
             j += 1
         return n
@@ -571,7 +587,8 @@ class TaskPanel:
 
     def change_speed(self, delta):
         self.speed_index = max(0, min(len(SPEEDS) - 1, self.speed_index + delta))
-        self.lbl_speed.setText("x%d" % SPEEDS[self.speed_index])
+        self._budget = 0.0
+        self.lbl_speed.setText("x%g" % SPEEDS[self.speed_index])
 
     def on_tick(self):
         if self.sim is None:

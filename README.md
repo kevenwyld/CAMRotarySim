@@ -21,7 +21,7 @@ can't be extended from an addon:
 
 The UI follows its conventions: Job combo, operation list with "follows
 visibility", play/pause, single step, a slider, speed steps 1/2/5/10/25/50.
-It adds a reset.
+It adds a reset, and ×0.25 and ×0.5 for short paths.
 
 https://github.com/user-attachments/assets/ad96ca03-bc3d-4b20-8266-5192bdd13e37
 
