@@ -98,10 +98,16 @@ class Wire:
 class Shape:
     """A solid known only by its XZ section edges (at Y = section_y)."""
 
-    def __init__(self, section_edges, bbox, section_y=0.0, mesh=None):
+    def __init__(self, section_edges, bbox, section_y=0.0, mesh=None, sections=None):
+        """
+        section_edges: the section at Y = section_y; or sections: a list of
+        ((y_min, y_max), edges), the section anywhere in that Y range (e.g.
+        an insert and the holder above it).
+        """
         self.section_edges = section_edges
         self.BoundBox = bbox
         self.section_y = section_y
+        self.sections = sections
         self.Placement = Placement()
         self.mesh = mesh
         self.slices = []
@@ -110,12 +116,19 @@ class Shape:
         return False
 
     def copy(self):
-        return Shape(self.section_edges, self.BoundBox, self.section_y, self.mesh)
+        return Shape(self.section_edges, self.BoundBox, self.section_y, self.mesh, self.sections)
 
     def slice(self, direction, d):
         assert (direction.x, direction.y, direction.z) == (0, 1, 0)
-        assert abs(d - self.section_y) < 1e-9, "section plane Y=%g, fixture is at Y=%g" % (d, self.section_y)
         self.slices.append(d)
+        if self.sections is not None:
+            for (lo, hi), edges in self.sections:
+                if lo < d < hi:
+                    return [Wire([Edge(e, d) for e in edges])]
+            raise AssertionError("no fixture section at Y=%g" % d)
+        # a single fixture section stands for any plane within the shape's thickness
+        bb = self.BoundBox
+        assert bb.YMin - 1e-9 <= d <= bb.YMax + 1e-9, "section plane Y=%g outside the shape" % d
         return [Wire([Edge(e, d) for e in self.section_edges])]
 
     def tessellate(self, tol):

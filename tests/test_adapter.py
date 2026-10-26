@@ -175,6 +175,42 @@ class TestAdapter(unittest.TestCase):
         fakefreecad.sys.modules["Machine.models.machine"].MachineFactory.files = {}
         self.assertIsNone(fa.machine_rotary_axis(job))
 
+    def test_tool_with_holder(self):
+        # CAM Lathe Turning draws the holder in the tool's solid: the section must be the insert's plane
+        import json
+        with open(os.path.join(HERE, "data", "holders", "tools.json")) as f:
+            d = json.load(f)
+        q = lambda v: types.SimpleNamespace(Value=v)  # noqa: E731
+        p = d["params"]
+
+        def tool(bbox, sections, label):
+            return types.SimpleNamespace(Label=label, ShapeID="isoshape",
+                                         Shape=fakefreecad.Shape([], fakefreecad.BoundBox(*bbox), sections=sections),
+                                         TipRadius=q(p["TipRadius"]), EdgeLength=q(p["EdgeLength"]),
+                                         TipAngle=q(p["TipAngle"]), Rotation=q(p["Rotation"]))
+
+        t = d["turning"]
+        # the insert hangs under Y 0; the holder sits on it, Y 0 to 12
+        turning = tool(t["bbox"], [((-1.0, 0.0), t["insert"]), ((0.0, 12.0), t["holder"])], "iso turning insert 4")
+        outline, note = self.fa.tool_outline(turning)
+        self.assertEqual(note, "")
+        np.testing.assert_allclose(outline.control_in_shape, (0.0, 0.0), atol=1e-9)   # origin = imaginary tip
+        self.assertAlmostEqual(outline.nose_radius, 0.4, 6)
+        self.assertLess(outline.xmax, 10.0)                          # the insert, not the 80 mm holder
+        self.assertEqual(turning.Shape.slices, [])                   # a copy was sliced
+        # the boring bar spans the insert's plane: its section is insert and bar, nose included
+        b = d["boring"]
+        boring = tool(b["bbox"], [((-6.0, 4.0), b["cutting_plane"])], "iso turning insert boring 4")
+        outline, note = self.fa.tool_outline(boring)
+        self.assertEqual(note, "")
+        np.testing.assert_allclose(outline.control_in_shape, (0.0, 0.0), atol=1e-9)
+        self.assertAlmostEqual(outline.nose_radius, 0.4, 6)
+        # a section without the nose (only holder there) falls back to the parameters, and says so
+        only_holder = tool(t["bbox"], [((-1.0, 12.0), t["holder"])], "holder only")
+        outline, note = self.fa.tool_outline(only_holder)
+        self.assertIn("has no nose of radius 0.4", note)
+        self.assertIn("using Isoshape parameters", note)
+
     def test_side_property_fallback(self):
         op = types.SimpleNamespace(Proxy=object(), Side="Internal")
         self.assertTrue(self.fa.is_internal(op))

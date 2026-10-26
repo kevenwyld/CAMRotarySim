@@ -152,8 +152,13 @@ These were verified against source and the sample Job, not assumed:
 - **Imaginary tip:** paths are programmed to the insert's imaginary tip. The
   nose centre is at (X + r, Z + r). This is from LibLathe `nose_compensate` with
   its internal −X frame, which `to_commands(invert_x=True)` flips.
-- **Insert outline:** taken from the op's tool solid, sectioned in the XZ plane at
-  mid thickness. The control point depends on the shape (CAM Lathe Turning
+- **Insert outline:** taken from the op's tool solid, sectioned in the XZ plane
+  through the shape's origin (just under Y = 0), where the cutting edge is. A
+  holder drawn in the same solid stands off that plane and is left out. A
+  boring bar crossing it comes into the outline, which only matters where the
+  bar would hit the stock (holders aren't collision-checked yet). An Isoshape
+  section without a nose of the tool's TipRadius falls back to the
+  parameters. The control point depends on the shape (CAM Lathe Turning
   `TurnToolShapes.py`):
   - **Isoshape:** the nose arc nearest the shape origin, minus (r, r): the
     imaginary tip.
