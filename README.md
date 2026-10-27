@@ -200,9 +200,10 @@ These were verified against source and the sample Job, not assumed:
   mirrored imaginary tip, the nose's outermost point. The simulator mirrors
   the outline the same way and draws the tool mirrored. An internal tool
   widens the bore to the top of its outline.
-- **Threads (G33):** per LinuxCNC's G-code reference, every pass waits for the
-  spindle index, then moves K per revolution along its drive line, starting D
-  degrees past the index. The tool stays at world angle 0, so it passes
+- **Threads (G33):** per LinuxCNC's G-code reference and motion planner
+  (`tp.c`), a G33 after a non-synchronized move waits for the spindle index,
+  then moves K per revolution along its drive line, starting D degrees past
+  the index. A G33 straight after another continues the same helix. The tool stays at world angle 0, so it passes
   workpiece angle θ when the spindle has turned −θ.
   - The rapid out after a G33 is taken as instant and cuts nothing.
   - The thread measurement covers the interior whole pitches:
@@ -268,9 +269,9 @@ These were verified against source and the sample Job, not assumed:
   path moves it (lathe drilling is at X 0).
 - **Diameter mode:** G7/G8 are reported, not applied.
 - **Threads:**
-  - G76 is reported, not simulated yet.
   - The tool is taken as a flat profile in the XZ plane, ignoring the helix's
     lead angle.
+  - G76 is reported, not simulated yet.
   - The thread hand is a setting.
 - **Milling:**
   - Turning and milling ops can't be simulated together yet.

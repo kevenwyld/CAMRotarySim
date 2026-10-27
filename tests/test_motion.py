@@ -113,6 +113,18 @@ class TestMotion(unittest.TestCase):
         self.assertTrue(any("positive K" in m for m in msgs))
         self.assertTrue(any("G76" in m for m in msgs))
 
+    def test_consecutive_g33_continue_the_helix(self):
+        moves, _ = run([("G18", {}), ("G0", {"X": 5.0, "Z": 10.0}),
+                        ("G33", {"Z": 0.0, "K": 2.0, "D": 30.0}),        # 5 turns
+                        ("G1", {"Z": 0.0, "F": 1.0}),                    # zero length: no move, sync kept
+                        ("G33", {"X": 6.0, "Z": -1.0, "K": 2.0}),        # continues: starts 5 turns on
+                        ("G0", {"X": 8.0}), ("G0", {"Z": 10.0}), ("G0", {"X": 5.0}),
+                        ("G33", {"Z": 0.0, "K": 2.0, "D": 30.0})])        # after rapids: a fresh sync
+        th = [m for m in moves if m.kind == "thread"]
+        self.assertEqual(th[0].start_angle, 30.0)
+        self.assertAlmostEqual(th[1].start_angle, 30.0 + 5 * 360.0, 9)
+        self.assertEqual(th[2].start_angle, 30.0)
+
     def test_canned_cycles(self):
         def z_path(cmds):
             moves, diags = run(cmds)

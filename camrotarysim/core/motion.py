@@ -121,6 +121,9 @@ class MotionState:
     motion: Optional[str] = None
     feed: Optional[float] = None
     retract_mode: str = "G98"   # canned cycle return level (G98: old Z, G99: R)
+    # spindle sync: the angle (degrees past the index) where the last G33 left
+    # the spindle, while the moves stay synchronized; None after any other move
+    sync: Optional[float] = None
     cycle: dict = field(default_factory=dict)  # sticky canned cycle words and the series' old Z
 
 
@@ -274,6 +277,7 @@ class MotionInterpreter:
                     continue
             if n in self.CYCLES:
                 moves.extend(self._cycle(n, params, op, index))
+                st.sync = None
                 continue
             if n in ("G7", "G8"):
                 self._diag("unsupported", op, index,
@@ -316,8 +320,14 @@ class MotionInterpreter:
                 if k <= 0:
                     self._diag("thread", op, index, "G33 without a positive K (distance per revolution)")
                     continue
-                moves.append(Move(THREAD, start_t, end_t, op, index, None, pitch=k,
-                                  start_angle=abs(float(params.get("D", 0.0)))))
+                # LinuxCNC (tp.c): a synchronized move right after another
+                # continues its helix ("save the spindle position so the next
+                # synced move can be in the right place"); only a fresh sync
+                # waits for the index, and then D's magnitude past it
+                a0 = st.sync if st.sync is not None else abs(float(params.get("D", 0.0)))
+                m = Move(THREAD, start_t, end_t, op, index, None, pitch=k, start_angle=a0)
+                st.sync = a0 + 360.0 * m.linear_length / k
+                moves.append(m)
                 continue
             if n != "G0" and not st.feed:
                 self._diag("feed", op, index, "%s with zero or missing feed rate (F%s)" % (n, st.feed))
@@ -326,6 +336,7 @@ class MotionInterpreter:
                          None if n == "G0" else st.feed)
                 m.sync_retract = n == "G0" and bool(moves) and moves[-1].kind == THREAD
                 moves.append(m)
+                st.sync = None
                 continue
             plane = PLANES[st.plane]
             ccw = n == "G3"
@@ -339,6 +350,7 @@ class MotionInterpreter:
                 self._diag("arc", op, index,
                            "%s start and end radius differ by %.4f mm" % (n, err), err)
             moves.append(Move(ARC, start_t, end_t, op, index, st.feed, plane, centre, ccw, sweep, radius))
+            st.sync = None
         return moves
 
 
