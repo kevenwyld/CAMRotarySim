@@ -183,6 +183,121 @@ class MotionInterpreter:
     def _diag(self, kind, op, index, message, value=0.0):
         self.diagnostics.append(Diagnostic(kind, op, index, message, value))
 
+    TINY = 1e-12
+
+    def _g76(self, params, op, index):
+        """
+        Expand a G76 threading cycle into its passes, as LinuxCNC's
+        interpreter does (rs274ngc interp_convert.cc, convert_threading_cycle
+        and threading_pass), in the ZX plane with X as a radius:
+        - the drive line is the current X, the thread starts at the current Z
+          and ends at Z; I is the thread peak's offset from the drive line
+          (negative: external), J the first cut's depth beyond the peak, K the
+          full depth;
+        - cut depths |I| + J, then |I| + J * n^(1/R) for passes n = 2, 3, ...
+          while short of |I| + K (R below 1 or absent: 1), then H + 1 passes at
+          full depth;
+        - each pass is shifted along the drive line by (depth - |I|) tan Q
+          (Q absent: 0), toward where the thread starts; all end on the
+          finished flank at Z + K tan Q - shift;
+        - a pass: rapid back (out by the depth still to go) to the shifted
+          start, rapid in to the cut depth, a spindle-synchronized cut at P
+          per revolution to the end, rapid out; with an entry taper (L1, L3)
+          the way in and with an exit taper (L2, L3) the end of the cut are
+          synchronized tapers over E along the drive line, out to the crest,
+          continuing the same helix (their pitch is scaled so the advance per
+          revolution along Z stays P);
+        - every pass starts D degrees past the index (D's magnitude); at the
+          end, a rapid to the end of the drive line.
+        """
+        st = self.state
+        if any(st.pos[i] is None for i in LINEAR):
+            self._diag("thread", op, index, "G76 before the position is known: not simulated")
+            return []
+        need = [w for w in ("P", "Z", "I", "J", "K") if w not in params]
+        if need:
+            self._diag("thread", op, index, "G76 without %s: not simulated" % " ".join(need))
+            return []
+        pitch = float(params["P"])
+        i_n, j_n, k_n = float(params["I"]), float(params["J"]), float(params["K"])
+        if pitch <= 0 or i_n == 0 or j_n <= 0 or k_n <= j_n:
+            self._diag("thread", op, index, "G76 needs P > 0, I not 0, J > 0 and K > J: not simulated")
+            return []
+        if st.plane != "G18":
+            self._diag("thread", op, index, "G76 outside G18: simulated in the ZX plane")
+        safe_x, start_y, start_z = st.pos[0], st.pos[1], st.pos[2]
+        end_z = float(params["Z"])
+        boring = i_n > 0
+        sgn = 1.0 if boring else -1.0           # deeper is outward when boring
+        full_dia_depth = abs(i_n)
+        start_depth = abs(i_n) + abs(j_n)
+        cut_increment = abs(j_n)
+        height = abs(k_n)
+        end_depth = abs(k_n) + abs(i_n)
+        q = float(params.get("Q", 0.0))
+        if q == -1:
+            q = 0.0
+        q = math.radians(q)
+        if end_z > start_z:
+            q = -q
+        springs = int(params.get("H", 0)) if "H" in params else 0
+        r = float(params["R"]) if "R" in params else 1.0
+        if r < 1.0:
+            r = 1.0
+        taper = max(float(params.get("E", 0.0)), 0.0)
+        taper_pitch = pitch * math.hypot(taper, height) / taper if taper > 0 else pitch
+        if end_z > start_z:
+            taper = -taper
+        flags = max(int(params.get("L", 0)), 0)
+        entry, exit_ = flags & 1, flags & 2
+        angle0 = abs(float(params.get("D", 0.0)))
+        target_z = end_z + abs(k_n) * math.tan(q)
+        moves = []
+
+        def go(kind, x, z, k=0.0, a0=0.0):
+            start = tuple(st.pos)
+            end = list(st.pos)
+            end[0], end[1], end[2] = x, start_y, z
+            end = tuple(end)
+            st.pos = list(end)
+            if end == start:
+                return a0
+            m = Move(kind, start, end, op, index, None if kind == RAPID else st.feed)
+            if kind == THREAD:
+                m.pitch, m.start_angle = k, a0
+                a0 += 360.0 * m.linear_length / k      # the helix continues into the next segment
+            if kind == RAPID and moves and moves[-1].kind == THREAD:
+                m.sync_retract = True
+            moves.append(m)
+            return a0
+
+        def one_pass(depth):
+            zoff = (depth - full_dia_depth) * math.tan(q)
+            cut_x = safe_x + sgn * depth
+            go(RAPID, safe_x + sgn * (depth - end_depth), start_z - zoff)           # back
+            a = angle0
+            if taper and entry:
+                a = go(THREAD, safe_x + sgn * (depth - height), start_z - zoff, taper_pitch, a)   # in
+                a = go(THREAD, cut_x, start_z - zoff - taper, taper_pitch, a)                     # angled in
+            else:
+                go(RAPID, cut_x, start_z - zoff)                                    # in
+            if taper and exit_:
+                a = go(THREAD, cut_x, target_z - zoff + taper, pitch, a)            # over
+                a = go(THREAD, safe_x + sgn * (depth - height), target_z - zoff, taper_pitch, a)  # angled out
+            else:
+                a = go(THREAD, cut_x, target_z - zoff, pitch, a)                    # over
+            go(RAPID, safe_x + sgn * (depth - end_depth), target_z - zoff)          # out
+
+        depth, n = start_depth, 1
+        while depth < end_depth - self.TINY:
+            one_pass(depth)
+            n += 1
+            depth = full_dia_depth + cut_increment * n ** (1.0 / r)
+        for _ in range(springs + 1):
+            one_pass(end_depth)
+        go(RAPID, safe_x, end_z)            # to the end of the drive line
+        return moves
+
     def _cycle(self, n, params, op, index):
         """
         Expand a canned drilling cycle (G81, G82, G83, G73) into moves, as
@@ -292,8 +407,10 @@ class MotionInterpreter:
                 st.motion = n
             elif n.startswith("G"):
                 if n == "G76":
-                    self._diag("unsupported", op, index, "G76 threading cycle is not simulated yet")
-                elif n in ("G81", "G82", "G83", "G73", "G84", "G85"):
+                    moves.extend(self._g76(params, op, index))
+                    st.sync = None      # the cycle ends with a rapid
+                    continue
+                if n in ("G81", "G82", "G83", "G73", "G84", "G85"):
                     self._diag("unsupported", op, index, "canned cycle %s is not simulated" % n)
                 else:
                     self._diag("unsupported", op, index, "command %s is ignored" % n)

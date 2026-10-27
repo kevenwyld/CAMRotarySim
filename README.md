@@ -200,10 +200,14 @@ These were verified against source and the sample Job, not assumed:
   mirrored imaginary tip, the nose's outermost point. The simulator mirrors
   the outline the same way and draws the tool mirrored. An internal tool
   widens the bore to the top of its outline.
-- **Threads (G33):** per LinuxCNC's G-code reference and motion planner
+- **Threads (G33, G76):** per LinuxCNC's G-code reference and motion planner
   (`tp.c`), a G33 after a non-synchronized move waits for the spindle index,
   then moves K per revolution along its drive line, starting D degrees past
-  the index. A G33 straight after another continues the same helix. The tool stays at world angle 0, so it passes
+  the index. A G33 straight after another continues the same helix. A G76
+  cycle is expanded into its passes as LinuxCNC's interpreter does
+  (`convert_threading_cycle`): pass depths from J, K and R, the Q infeed
+  shift, H spring passes, E/L entry and exit tapers that keep the lead along
+  Z, and D. The tool stays at world angle 0, so it passes
   workpiece angle θ when the spindle has turned −θ.
   - The rapid out after a G33 is taken as instant and cuts nothing.
   - The thread measurement covers the interior whole pitches:
@@ -271,7 +275,6 @@ These were verified against source and the sample Job, not assumed:
 - **Threads:**
   - The tool is taken as a flat profile in the XZ plane, ignoring the helix's
     lead angle.
-  - G76 is reported, not simulated yet.
   - The thread hand is a setting.
 - **Milling:**
   - Turning and milling ops can't be simulated together yet.
@@ -308,6 +311,8 @@ These were verified against source and the sample Job, not assumed:
     CAM Lathe Turning's own `op_generate_gcode()`.
   - `devtools/run_rotary_job.py --out DIR` runs the indexed rotary Job and
     plots sections through each machined face against the model.
+  - `devtools/make_thread_g76_fixture.py` writes the thread Job's thread as
+    LibLathe's G33 passes or its G76 cycle.
   - `devtools/run_thread_job.py --out DIR` runs the thread Job and plots an
     axial section against the ISO basic profile, plus an unrolled
     radius-versus-angle map that shows the hand.

@@ -102,7 +102,7 @@ class TestMotion(unittest.TestCase):
                             ("G33", {"X": 5.7, "Z": -20.0, "K": 1.75}),
                             ("G1", {"X": 5.7, "Z": -20.0, "F": 1.0}),   # the addon's zero-length display move
                             ("G0", {"X": 7.0}), ("G33", {"Z": -30.0, "K": 2.0, "D": -90.0}),
-                            ("G33", {"Z": -40.0}), ("G76", {"P": 1.5})])
+                            ("G33", {"Z": -40.0}), ("G76", {"P": 1.5, "Z": -50.0})])
         kinds = [m.kind for m in moves]
         self.assertEqual(kinds, ["rapid", "thread", "rapid", "thread"])
         self.assertEqual(moves[1].pitch, 1.75)
@@ -111,7 +111,7 @@ class TestMotion(unittest.TestCase):
         self.assertEqual(moves[3].start_angle, 90.0)  # D's magnitude, as LinuxCNC uses it
         msgs = [d.message for d in diags]
         self.assertTrue(any("positive K" in m for m in msgs))
-        self.assertTrue(any("G76" in m for m in msgs))
+        self.assertTrue(any("G76 without I J K: not simulated" in m for m in msgs))
 
     def test_consecutive_g33_continue_the_helix(self):
         moves, _ = run([("G18", {}), ("G0", {"X": 5.0, "Z": 10.0}),
@@ -124,6 +124,68 @@ class TestMotion(unittest.TestCase):
         self.assertEqual(th[0].start_angle, 30.0)
         self.assertAlmostEqual(th[1].start_angle, 30.0 + 5 * 360.0, 9)
         self.assertEqual(th[2].start_angle, 30.0)
+
+    def test_g76_as_linuxcnc(self):
+        # drive line X 10 at Z 2; peak 1 inside it (external thread at r 9), first cut 0.2, full 1.0
+        P, I, J, K, R, Q = 1.5, -1.0, 0.2, 1.0, 2.0, 30.0
+        moves, diags = run([("G18", {}), ("G0", {"X": 10.0, "Z": 2.0}),
+                            ("G76", {"P": P, "Z": -20.0, "I": I, "J": J, "K": K, "R": R, "Q": Q, "H": 2, "D": 45.0})])
+        self.assertEqual(diags, [])
+        th = [m for m in moves if m.kind == "thread"]
+        # depths |I| + J n^(1/R) while short of |I| + K, then H + 1 at full depth
+        depths, n = [], 1
+        d = abs(I) + J
+        while d < abs(I) + K - 1e-12:
+            depths.append(d)
+            n += 1
+            d = abs(I) + J * n ** (1 / R)
+        depths += [abs(I) + K] * 3
+        self.assertEqual(len(th), len(depths))
+        t = math.tan(math.radians(Q))
+        for m, d in zip(th, depths):
+            zoff = (d - abs(I)) * t
+            self.assertAlmostEqual(m.start[0], 10.0 - d, 9)
+            self.assertAlmostEqual(m.start[2], 2.0 - zoff, 9)
+            self.assertAlmostEqual(m.end[2], -20.0 + K * t - zoff, 9)   # every pass ends on the flank
+            self.assertEqual((m.pitch, m.start_angle), (P, 45.0))
+        self.assertAlmostEqual(th[-1].end[2], -20.0, 9)
+        # each pass: rapid back, rapid in, cut, rapid out (marked as the synchronized retract);
+        # the G0 to the drive line came from an unknown position, so it isn't a move
+        self.assertEqual([m.kind for m in moves[0:4]], ["rapid", "rapid", "thread", "rapid"])
+        self.assertTrue(moves[3].sync_retract)
+        self.assertAlmostEqual(moves[3].end[0], 10.0 - depths[0] + abs(I) + K, 9)
+        # the end of the drive line
+        self.assertEqual(moves[-1].end[:3], (10.0, 0.0, -20.0))
+
+    def test_g76_tapers_and_defaults(self):
+        P, K, E = 2.0, 1.2, 3.0
+        moves, _ = run([("G18", {}), ("G0", {"X": 10.0, "Z": 2.0}),
+                        ("G76", {"P": P, "Z": -20.0, "I": -1.0, "J": 0.5, "K": K, "E": E, "L": 3})])
+        th = [m for m in moves if m.kind == "thread"]
+        # no R: constant depth increments; no Q: no shift; L3: in, cut, out tapers all synchronized
+        first = th[:3]
+        # back (out by the depth still to go), then a synchronized way in to the crest's side
+        self.assertAlmostEqual(first[0].start[0], 10.0 - 1.5 + (1.0 + K), 9)
+        self.assertAlmostEqual(first[0].end[0], 10.0 - 1.5 + K, 9)
+        self.assertAlmostEqual(first[0].end[2], 2.0, 9)
+        self.assertAlmostEqual(first[1].end[2], 2.0 - E, 9)
+        self.assertAlmostEqual(first[2].end[2], -20.0 + E, 9)
+        tp = P * math.hypot(E, K) / E
+        self.assertAlmostEqual(first[1].pitch, tp, 9)      # the taper keeps P per turn along Z
+        # one helix through a pass: each segment starts where the one before left the spindle
+        self.assertAlmostEqual(first[1].start_angle, first[0].start_angle + 360 * first[0].linear_length / tp, 6)
+        self.assertAlmostEqual(first[2].start_angle, first[1].start_angle + 360 * first[1].linear_length / tp, 6)
+        for k_bad in ({"I": 0.0}, {"J": 0.0}, {"K": 0.5}):
+            p = {"P": 1.0, "Z": -5.0, "I": -1.0, "J": 0.5, "K": 1.0}
+            p.update(k_bad)
+            m, d = run([("G18", {}), ("G0", {"X": 10.0, "Z": 2.0}), ("G76", p)])
+            self.assertTrue(any("not simulated" in x.message for x in d), k_bad)
+        # internal (I > 0): deeper is outward
+        moves, _ = run([("G18", {}), ("G0", {"X": 5.0, "Z": 2.0}),
+                        ("G76", {"P": 1.0, "Z": -5.0, "I": 1.0, "J": 0.3, "K": 0.6})])
+        th = [m for m in moves if m.kind == "thread"]
+        self.assertAlmostEqual(th[0].start[0], 5.0 + 1.3, 9)
+        self.assertAlmostEqual(th[-1].start[0], 5.0 + 1.6, 9)
 
     def test_canned_cycles(self):
         def z_path(cmds):

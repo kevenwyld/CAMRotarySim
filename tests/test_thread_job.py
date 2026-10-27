@@ -85,5 +85,50 @@ class TestThreadJob(unittest.TestCase):
         self.assertAlmostEqual((z1 - z0) % 1.75, 1.75 / 4, delta=0.06)
 
 
+class TestG76(unittest.TestCase):
+    """The same thread from LibLathe as G33 passes and as one G76 cycle (devtools/make_thread_g76_fixture.py)."""
+
+    def run_file(self, fn):
+        tool = ToolOutline.from_section(json.loads(_load("tool_threading_section.json"))["edges"], 0.05,
+                                        reference=REF_ORIGIN)
+        sd = json.loads(_load("stock.json"))
+        st = RotaryStock(sd["z_min"], sd["z_max"], 0.05, sd["radius"])
+        sim = Simulation(st, [OpInput("TurnThread", parse_gcode_text(_load(fn)), tool,
+                                      meta=json.loads(_load("op.json")))])
+        sim.run_to_end()
+        return sim, st
+
+    def test_g76_cuts_what_the_g33_passes_cut(self):
+        sim76, st76 = self.run_file("TurnThread_G76.nc")
+        sim33, st33 = self.run_file("TurnThread_G33_liblathe.nc")
+        self.assertEqual(sim76.events, [])
+        self.assertEqual(sim76.diagnostics, [])
+        self.assertEqual(len(sim76.thread_moves()), len(sim33.thread_moves()))
+        self.assertLess(float(np.max(np.abs(st76.R - st33.R))), 1e-6)
+        r = T.measure(st76, T.thread_zones(sim76)[0], 3.0)
+        self.assertAlmostEqual(r.pitch_diameter, 11.2592, 3)
+
+    def test_run_out(self):
+        # with an exit taper the G76 and LibLathe's explicit passes agree once the explicit taper's K
+        # keeps the lead along Z (as G76's taper pitch does); as written they differ in the run-out
+        import math
+        sim76, st76 = self.run_file("TurnThread_G76_runout.nc")
+        cmds, pos = [], {}
+        for name, p in parse_gcode_text(_load("TurnThread_G33_runout.nc")):
+            p = dict(p)
+            if name == "G33" and "X" in pos and abs(p.get("X", pos["X"]) - pos["X"]) > 1e-9:
+                p["K"] *= math.hypot(p["Z"] - pos["Z"], p["X"] - pos["X"]) / abs(p["Z"] - pos["Z"])
+            cmds.append((name, p))
+            pos.update({k: p[k] for k in "XZ" if k in p})
+        sd = json.loads(_load("stock.json"))
+        st = RotaryStock(sd["z_min"], sd["z_max"], 0.05, sd["radius"])
+        tool = ToolOutline.from_section(json.loads(_load("tool_threading_section.json"))["edges"], 0.05,
+                                        reference=REF_ORIGIN)
+        Simulation(st, [OpInput("t", cmds, tool)]).run_to_end()
+        self.assertLess(float(np.max(np.abs(st76.R - st.R))), 1e-6)
+        _sim33, st33 = self.run_file("TurnThread_G33_runout.nc")
+        self.assertGreater(float(np.max(np.abs(st76.R - st33.R))), 0.1)
+
+
 if __name__ == "__main__":
     unittest.main()
