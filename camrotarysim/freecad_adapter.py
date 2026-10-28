@@ -284,7 +284,7 @@ def build_inputs(job, ops, ds, forward_right_hand=True, hole="auto"):
             stock.add_hole(r, z_lo, stock.s_max)
             stock.hole = (2 * r, stock.s_max - z_lo)
             notes.append("starting hole %.3f from %s's Min Diameter, %s" % (
-                2 * r, label, "through" if through else "%.3f deep (to the bottom of the model's bore)"
+                2 * r, label, "through" if through else "%.3f deep (to the model's bore bottom)"
                 % (stock.s_max - z_lo)))
     elif hole:
         d, depth = hole
@@ -427,7 +427,7 @@ def build_milling_inputs(job, ops, h=0.5, retract="auto"):
         notes.append(note)
     elif retract is None:
         z = None
-        notes.append("no retract before indexing (set in the panel): the rotary axis turns with the tool where it is")
+        notes.append("no retract before indexing (panel setting): the rotary axis turns with the tool in place")
     else:
         z = float(retract)
         notes.append("retract to Z %.3f before indexing (set in the panel)" % z)

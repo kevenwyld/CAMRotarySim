@@ -298,7 +298,7 @@ def format_milling(sim, cmp=None, ops_info=(), max_lines=8):
     out = ["Simulation %s: %d moves, %d samples." % (
         "complete" if sim.done else "%.0f%% simulated" % (100 * sim.progress), len(sim.moves), sim.total_samples)]
     if ops_info:
-        out += ["", "Operations (tool axis in the workpiece, rotary angle that brings it to +Z):"]
+        out += ["", "Operations (tool axis in the workpiece, rotary angle to bring it to +Z):"]
         for info in ops_info:
             out.append("  " + info)
     if cmp is not None:
@@ -309,11 +309,11 @@ def format_milling(sim, cmp=None, ops_info=(), max_lines=8):
         else:
             out.append("  Worst gouge: none")
         if cmp.uncut > 0:
-            out.append("  Most left: %s%.3f mm beyond the part at (%.2f, %.2f, %.2f); %.1f mm3 left in all"
+            out.append("  Most left: %s%.3f mm beyond the part at (%.2f, %.2f, %.2f); %.1f mm3 in all"
                        % ((">= " if cmp.uncut >= cmp.band - 1e-6 else "", min(cmp.uncut, cmp.band))
                           + cmp.uncut_at + (cmp.uncut_volume,)))
         else:
-            out.append("  Material left beyond the part: none")
+            out.append("  Most left: none")
     out.append("")
     if sim.events:
         out.append("Events:")

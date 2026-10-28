@@ -56,7 +56,7 @@ def format_report(sim, result=None, part_pos=None, part_neg=None, max_lines=8, t
         if part_pos is not None and part_neg is not None:
             off = axis_offset(part_pos, part_neg)
             if off is not None and abs(off) > 1e-3:
-                out.append("  Note: the part's axis is offset %+.4f mm in X from the spindle axis." % off)
+                out.append("  Note: part axis offset %+.4f mm in X from the spindle axis." % off)
 
     if bore is not None:
         out.append("")
@@ -67,7 +67,7 @@ def format_report(sim, result=None, part_pos=None, part_neg=None, max_lines=8, t
     if threads:
         from .thread_check import format_thread
         out.append("")
-        out.append("Threads (measured on the simulated stock):")
+        out.append("Threads (measured on the stock):")
         for t in threads:
             out += format_thread(t)
 
@@ -79,7 +79,7 @@ def format_report(sim, result=None, part_pos=None, part_neg=None, max_lines=8, t
         if len(sim.events) > max_lines * 2:
             out.append("  ... %d more" % (len(sim.events) - max_lines * 2))
     else:
-        out.append("Events: none (no rapid cuts, holder collisions or parting).")
+        out.append("Events: none (no rapid cuts, collisions or parting).")
 
     if sim.diagnostics:
         out.append("")

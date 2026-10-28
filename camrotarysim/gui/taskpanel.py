@@ -114,7 +114,7 @@ class TaskPanel:
         self.spin_angles.setRange(24, 720)
         self.spin_angles.setSingleStep(24)
         self.spin_angles.setValue(self.prefs.GetInt("ThreadAngles", 120))
-        self.spin_angles.setToolTip(translate("Angles around the part where threads are cut (more: finer, slower)"))
+        self.spin_angles.setToolTip(translate("Angular resolution for threads; more is finer and slower"))
         self.spin_angles.valueChanged.connect(self.mark_dirty)
         grid.addWidget(QtGui.QLabel(translate("Thread angles")), 3, 0)
         grid.addWidget(self.spin_angles, 3, 1)
@@ -123,8 +123,8 @@ class TaskPanel:
             self.combo_hand.addItem(translate(h))
         self.combo_hand.setCurrentIndex(1 if self.prefs.GetBool("ForwardLeftHand", False) else 0)
         self.combo_hand.setToolTip(translate(
-            "The thread a Forward spindle cuts when the tool feeds toward -Z. Path commands don't say: it "
-            "depends on how the machine turns and which side the tool is on. Reverse cuts the other hand."))
+            "Thread hand a Forward spindle cuts when the tool feeds toward -Z; the path does not say, the "
+            "machine does. Reverse cuts the other hand."))
         self.combo_hand.currentIndexChanged.connect(self.mark_dirty)
         grid.addWidget(QtGui.QLabel(translate("Forward spindle cuts")), 4, 0)
         grid.addWidget(self.combo_hand, 4, 1)
@@ -133,8 +133,8 @@ class TaskPanel:
         for h in HOLES:
             self.combo_hole.addItem(translate(h))
         self.combo_hole.setToolTip(translate(
-            "The hole that exists before the program (drilled, or in the stock), for boring and internal "
-            "threads. Auto: the Min Diameter set on an internal op, down the model's bore (or through)."))
+            "Hole present before the program, for boring and internal threads. Auto: the Min Diameter set on "
+            "an internal op, down the model's bore or through."))
         self.spin_hole_d = self._spin(0.0, 10000.0, 0.0, 3, 0.5)
         self.spin_hole_depth = self._spin(0.0, 10000.0, 0.0, 3, 1.0)
         self.spin_hole_d.setToolTip(translate("Starting hole diameter"))
@@ -147,8 +147,7 @@ class TaskPanel:
         grid.addWidget(QtGui.QLabel(translate("Starting hole")), 5, 0)
         grid.addLayout(row_hole, 5, 1)
         self.spin_grid = self._spin(0.1, 5.0, self.prefs.GetFloat("MillingGrid", 0.5), 2, 0.1)
-        self.spin_grid.setToolTip(translate("Milling: spacing of the stock's distance grid (finer: slower, "
-                                            "sharper edges; faces are accurate well below it)"))
+        self.spin_grid.setToolTip(translate("Milling stock grid spacing. Finer is slower with sharper edges."))
         self.spin_grid.valueChanged.connect(self.mark_dirty)
         grid.addWidget(QtGui.QLabel(translate("Milling grid")), 6, 0)
         grid.addWidget(self.spin_grid, 6, 1)
@@ -156,9 +155,8 @@ class TaskPanel:
         for r in RETRACTS:
             self.combo_retract.addItem(translate(r))
         self.combo_retract.setToolTip(translate(
-            "Before the rotary axis turns between work planes. Auto: the machine's pre-rotary move (a G53 move "
-            "is shown clearing the stock's swing). None: turn with the tool where it is, which shows whether "
-            "the turning stock hits it. Custom: a Z."))
+            "Retract before the rotary axis turns between work planes. Auto: the machine's pre-rotary move "
+            "(G53 shown clearing the stock). None: turn in place. Custom: a Z."))
         self.spin_retract = self._spin(-10000.0, 10000.0, 0.0, 3, 1.0)
         self.spin_retract.setToolTip(translate("Retract Z (machine frame, work coordinates)"))
         row_r = QtGui.QHBoxLayout()
@@ -293,7 +291,7 @@ class TaskPanel:
                 on = turning and not (self.follow_vis.isChecked() and not op.Visibility and not allhidden)
                 item.setCheckState(QtCore.Qt.CheckState.Checked if on else QtCore.Qt.CheckState.Unchecked)
                 if not turning:
-                    item.setToolTip(translate("Neither a turning nor a milling operation this simulator knows"))
+                    item.setToolTip(translate("Not a turning or milling operation this simulator can run"))
                 item.setData(QtCore.Qt.ItemDataRole.UserRole, op.Name)
                 self.list_ops.addItem(item)
         self.list_ops.blockSignals(False)
@@ -718,9 +716,8 @@ class TaskPanel:
                                            self.spin_uncut.value())
             text = milling.format_milling(self.sim, cmp, self.op_info)
             text += "\n\nSetup:\n" + "\n".join("  " + n for n in self.notes)
-            text += ("\n\nNotes: the angles are what each op's work plane needs, solved here; compare "
-                     "them with the posted program. Edges are drawn chamfered by up to a third of the grid; "
-                     "the check is on the grid, where it isn't.")
+            text += ("\n\nNotes: angles are solved from each op's work plane; compare with the posted "
+                     "program. Drawn edges are chamfered by up to a third of the grid; the check is not.")
             self.report.setPlainText(text)
             return
         threads = self.measure_threads() if self.zones else None
@@ -728,9 +725,8 @@ class TaskPanel:
                              bore=self.bore_comparison())
         if getattr(self, "notes", None):
             text += "\n\nTools:\n" + "\n".join("  " + n for n in self.notes)
-        text += ("\n\nNotes: 'reachable' and holder checks use the insert outline only; "
-                 "the holder and chuck are not modelled.")
+        text += "\n\nNotes: reachable and holder checks use the insert outline only; holder and chuck are not modelled."
         if self.zones:
-            text += (" Threads: %s for a Forward spindle feeding toward -Z (setting above); the rapid out "
-                     "after each G33 is taken as instant." % self.combo_hand.currentText().lower())
+            text += (" Threads: %s for a Forward spindle feeding toward -Z; the rapid out after each G33 is "
+                     "instant." % self.combo_hand.currentText().lower())
         self.report.setPlainText(text)

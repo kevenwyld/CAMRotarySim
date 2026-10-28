@@ -99,7 +99,7 @@ def describe_retract(pre_rotary, swing, clearance):
     can't be placed without the work offset, so it becomes swing radius + clearance."""
     text = (pre_rotary or "").strip()
     if not text:
-        return None, "no pre-rotary move in the machine: the rotary axis turns with the tool where it is"
+        return None, "no pre-rotary move in the machine: the rotary axis turns with the tool in place"
     z = None
     for line in text.splitlines():
         words = line.upper().replace("G53", " G53 ").split()
@@ -112,7 +112,7 @@ def describe_retract(pre_rotary, swing, clearance):
     if "G53" in text.upper() or z is None:
         zc = swing + clearance
         return zc, ("pre-rotary move '%s' is in machine coordinates: shown as a retract to Z %.3f "
-                    "(the stock's swing radius %.3f plus %.3f clearance), as the work offset isn't known here"
+                    "(swing radius %.3f + %.3f clearance), the work offset being unknown"
                     % (text, zc, swing, clearance))
     return z, "pre-rotary move '%s': retract to Z %.3f" % (text, z)
 

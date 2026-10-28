@@ -91,7 +91,7 @@ def measure(stock, zone, tool_half_width=0.0, tol=0.01):
         sign = 1 if zone.internal else -1
         res.expected_root = float(meta["ThreadDiameter"]) + sign * 2 * float(meta["ThreadDepth"])
         if abs(2 * zone.deepest - res.expected_root) > 2 * tol:
-            res.notes.append("the deepest pass reaches diameter %.3f, the op's %s is %.3f"
+            res.notes.append("deepest pass reaches diameter %.3f; the op's %s is %.3f"
                              % (2 * zone.deepest, "major" if zone.internal else "root", res.expected_root))
     if stock.n_theta == 1:
         res.notes.append("stock has no angular detail: nothing to measure")
@@ -122,7 +122,7 @@ def measure(stock, zone, tool_half_width=0.0, tol=0.01):
         f1, f2 = groove(r1), groove(r2)
         if abs(f2 - f1) > 1e-9:
             res.pitch_diameter = 2 * (r1 + (0.5 - f1) * (r2 - r1) / (f2 - f1))
-            res.notes.append("pitch line outside the material (the groove is %s than the ridge even at the %s): "
+            res.notes.append("pitch line outside the material (groove %s than the ridge at the %s): "
                              "extrapolated along the flanks"
                              % (("narrower", "crests") if (f1 + f2) / 2 < 0.5 else ("wider", "roots")))
     if res.expected_pitch:

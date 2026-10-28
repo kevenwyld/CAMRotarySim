@@ -18,7 +18,7 @@ class CommandRotarySim:
             "MenuText": QtCore.QT_TRANSLATE_NOOP("CAM_RotarySim", "Rotary/Turning Simulator"),
             "ToolTip": QtCore.QT_TRANSLATE_NOOP(
                 "CAM_RotarySim",
-                "Simulates turning operations on the Job's stock and checks the result against the model"),
+                "Simulates turning and milling on the Job's stock and checks the result against the model"),
         }
 
     def IsActive(self):
