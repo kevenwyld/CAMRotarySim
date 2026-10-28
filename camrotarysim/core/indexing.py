@@ -1,22 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Indexing between milling ops on different work planes, as the machine runs
-it: where the rotary angle changes, the tool retracts (the machine's
-pre-rotary move, if any), the rotary axis turns, and the next op starts
-from where the tool is.
-
-The posted program does this (CAM's Processor: the pre-rotary move, then
-the rotary positioning move, then the op in its plane); the ops' Path
-commands don't. Each op's commands are local to its work plane, so the
-tool's position is carried from op to op through the machine frame
-(machine = R(axis, angle) * world, world = Placement * local) rather than
-as raw coordinates, which belong to different frames.
-
-The transition moves are an op of their own, in the machine frame: an
-identity frame and the rotary word for the table angle, so the simulation
-turns the workpiece under the tool one degree per sample. Without a
-retract the rotation is checked like any rapid: if the turning stock
-sweeps into the tool, it cuts and is reported.
+Indexing moves between milling ops on different work planes (retract, rotary turn),
+as the posted program runs them; the tool position is carried through the machine frame.
 """
 
 import numpy as np
@@ -62,15 +47,8 @@ def swing_radius(stock, axis):
 
 
 def with_indexing(ops, retract_z=None, start_angle=0.0):
-    """
-    Milling OpInputs (MillingKinematics, meta["angle"]) with the indexing
-    moves between them, and each op's start (OpInput.start, local X Y Z)
-    where the tool is when it begins.
-
-    retract_z: machine Z the tool goes to before the rotary axis turns, or
-    None to turn it where the tool is. start_angle: the rotary axis at the
-    start of the program.
-    """
+    """The milling OpInputs with indexing ops inserted where meta["angle"] changes, and each
+    op's start position set. retract_z: machine Z before turning, or None to turn in place."""
     out = []
     angle = float(start_angle)
     machine = None                     # tool tip in the machine frame, once known
@@ -117,13 +95,8 @@ def with_indexing(ops, retract_z=None, start_angle=0.0):
 
 
 def describe_retract(pre_rotary, swing, clearance):
-    """
-    (retract machine Z or None, note) from the machine's pre-rotary move.
-    A G53 move is in machine coordinates, which the simulator can't place
-    without the work offset: the retract is then shown at the stock's swing
-    radius about the rotary axis plus the clearance offset, which clears
-    anything the rotation sweeps.
-    """
+    """(retract machine Z or None, note) from the machine's pre-rotary move; a G53 move
+    can't be placed without the work offset, so it becomes swing radius + clearance."""
     text = (pre_rotary or "").strip()
     if not text:
         return None, "no pre-rotary move in the machine: the rotary axis turns with the tool where it is"

@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Kinematics: how a machine position removes material from a RotaryStock.
-
-A kinematics object maps one sampled machine position (X Y Z A B C) and a
-tool to a change of the stock height field, and reports contact metrics.
-This module is turning (and drilling, boring, threading on a lathe);
-milling, indexed or rotary, is milling.MillingKinematics.
+Turning kinematics: one sampled machine position (X Y Z A B C) and a tool to a change
+of the RotaryStock height field, plus contact metrics. Milling is milling.MillingKinematics.
 """
 
 import math
@@ -30,14 +26,8 @@ class Contact:
 
 
 class TurningKinematics:
-    """
-    Lathe: the workpiece spins about the stock axis, the tool moves in the
-    XZ plane at Y = 0 with X as a radius. The stock axis must be parallel to
-    Z; its origin offsets X and Z.
-
-    At each tool position the stock is lowered, at every angle, to the
-    lowest radius the tool outline reaches in each axial column.
-    """
+    """Lathe: the tool moves in XZ with X a radius, the stock axis parallel to Z. At each
+    position the stock is lowered, at every angle, to the outline's lowest radius per column."""
 
     name = "turning"
 
@@ -66,15 +56,8 @@ class TurningKinematics:
         return j0, j1, z - stock.s[j0:j1]
 
     def apply(self, stock, tool, pos, max_radius=math.inf):
-        """
-        Cut at one tool position. Contact.excess holds, per column touched,
-        how far material stood beyond the insert's back (above its top, or
-        inside its bottom for an internal tool) before the cut: where the
-        holder or bar would be. The simulation collects it over a move and
-        applies collision_width to the columns collected, so material a move
-        ploughs through counts over its whole length, while a thin wafer left
-        by an earlier pass doesn't.
-        """
+        """Cut at one tool position. Contact.excess: per column, material beyond the insert's
+        back before the cut (where the holder or bar is); Simulation applies collision_width."""
         if getattr(tool, "internal", False):
             return self._apply_internal(stock, tool, pos)
         x, z = self.tool_frame(pos)

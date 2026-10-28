@@ -1,15 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Surfaces of signed-distance grids (VoxelStock), and grids from triangle meshes.
-
-- surface_nets(): the phi = 0 surface as triangles (naive surface nets: a
-  vertex per grid cell the surface crosses, at the mean of its edges'
-  interpolated crossings; a quad per grid edge the surface crosses),
-  outward facing.
-- sample(): trilinear interpolation of a grid at points.
-- mesh_sdf(): a signed distance grid (positive inside) of a closed triangle
-  mesh: inside from ray parity along X, exact distances within a band
-  around the surface, clamped beyond it.
+Signed-distance grids: surface_nets() extracts phi = 0 as outward triangles, sample()
+interpolates trilinearly, mesh_sdf() builds a grid (positive inside) from a closed mesh.
 """
 
 import numpy as np

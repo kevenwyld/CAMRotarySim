@@ -1,13 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-FreeCAD side: turns a CAM Job into simulation inputs for the core.
-
-Access patterns follow CAM's own SimulatorGL.py (FreeCAD main):
-- Jobs: ActiveDocument.findObjects("Path::FeaturePython", "Job.*")
-- ops: job.Operations.OutList, active per Path.Base.Util.opProperty(op, "Active")
-- commands: PathScripts.PathUtils.getPathWithPlacement(op).Commands
-- tool: Path.Dressup.Utils.toolController(op).Tool (works through dressups)
-- model: job.Model.OutList, stock: job.Stock.Shape
+FreeCAD side: a CAM Job to simulation inputs for the core, read the way CAM's own
+SimulatorGL.py reads Jobs, ops, commands, tools, model and stock.
 """
 
 import numpy as np
@@ -106,12 +100,8 @@ def tool_reference(tool):
     return REF_ORIGIN
 
 
-# The cutting edge lies in the tool shape's XZ plane through its origin (the
-# reference point): an Isoshape insert hangs below its rake face at Y = 0,
-# threading and grooving inserts are centred on Y = 0. Holders and boring bars
-# drawn in the same solid (CAM Lathe Turning) stand off that plane or around
-# it, so the section is taken just under Y = 0, not at mid-thickness, which
-# with a holder is in the holder.
+# the cutting edge lies just under Y = 0 in the shape's frame; mid-thickness
+# would be inside a holder drawn in the same solid
 CUTTING_PLANE_Y = -0.01
 
 
@@ -123,14 +113,8 @@ def cutting_plane(bb):
 
 
 def tool_outline(tool):
-    """
-    The insert outline from the tool's own solid: section in the XZ plane
-    through the shape's origin (cutting_plane()), in the tool shape's
-    coordinates (Placement reset, as SimulatorGL does). An Isoshape section
-    without a nose of the tool's TipRadius isn't the insert; then, as when
-    the solid can't be sectioned, the outline comes from the shape
-    parameters (Isoshape, Threading, Drill). Returns (ToolOutline, note).
-    """
+    """(ToolOutline, note) from the tool solid's XZ section at cutting_plane(), Placement reset;
+    without a usable section (or an Isoshape nose of TipRadius) from the shape parameters."""
     tip_r = _value(tool.TipRadius) if hasattr(tool, "TipRadius") else None
     reference = tool_reference(tool)
     note = ""
@@ -194,18 +178,8 @@ def build_stock(job, ds):
 
 
 def is_internal(op):
-    """
-    Whether an op cuts inside (boring, internal threads), as the op itself
-    decides. CAM Lathe Turning proxies: Turn Thread's internal() follows the
-    selected face unless ThreadType is set; Rough/Profile answer
-    is_internal() (Side = Internal). Every CAM Lathe Turning op inherits
-    is_internal() from PathTurnBase.ObjectOp, where it is False for ops
-    without a Side (supports_internal = False), Turn Thread included; so
-    the op's own internal() is asked first, and either saying so counts.
-    Without a proxy answer: the Side / ThreadType properties. Drilling ops
-    (Turn Drill, or any op with a drill tool) are internal: the drill cuts
-    the hole from X 0 out to its radius.
-    """
+    """Whether an op cuts inside: drilling ops always; else the proxy's internal() then
+    is_internal() (either True counts); else the Side / ThreadType properties."""
     if is_drill_op(op):
         return True     # a drill on the axis cuts a hole: an internal tool
     proxy = getattr(op, "Proxy", None)
@@ -275,14 +249,8 @@ def op_meta(op):
 
 
 def build_inputs(job, ops, ds, forward_right_hand=True, hole="auto"):
-    """
-    (stock, [OpInput], part polylines, notes) for the selected ops.
-
-    hole: the hole internal ops bore from when nothing selected drills it:
-    "auto" (none if a drilling op is selected; else the smallest Min
-    Diameter set on an internal op, from the stock's front down the part's
-    bore, or through), None, or (diameter, depth from the stock's front).
-    """
+    """(stock, [OpInput], part polylines, notes) for the selected ops. hole: "auto" (the smallest
+    Min Diameter set on an internal op, unless a drilling op is selected), None, or (diameter, depth)."""
     stock = build_stock(job, ds)
     model = model_shape(job)
     polylines = section_polylines(model) if model is not None else []
@@ -400,16 +368,9 @@ def shape_triangles(shape, deflection=0.05):
 
 
 def build_milling_inputs(job, ops, h=0.5, retract="auto"):
-    """
-    (VoxelStock, [OpInput], part SDF grid or None, notes, per-op info lines,
-    [FreeCAD tool per input]) for milling ops, with the indexing moves
-    between ops on different work planes (core.indexing). retract: "auto"
-    (the machine's pre-rotary move), None (turn the rotary axis with the
-    tool where it is), or a machine Z. Commands are the ops' own (local to their work plane);
-    each op's MillingKinematics carries its frame, so arcs stay arcs in
-    their plane: CAM's applyPlacementToPath leaves arcs it tilts out of XY
-    as they are, which is wrong for work planes on the sides.
-    """
+    """(VoxelStock, [OpInput], part SDF or None, notes, per-op info, [FreeCAD tool per input]) for
+    milling ops with indexing moves between work planes. retract: "auto", None or a machine Z.
+    Commands stay local to their plane (CAM's applyPlacementToPath mistreats tilted arcs)."""
     from .core.milling import MillingKinematics, MillTool, VoxelStock, needed_angle
     from .core.simulation import OpInput
     from .core.stock import RotaryAxis

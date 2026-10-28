@@ -1,17 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Interpretation of FreeCAD Path commands into motion segments.
-
-Input is a sequence of (name, params) pairs, which is what Path.Command
-exposes as cmd.Name and cmd.Parameters. No FreeCAD import is needed here.
-
-Conventions (FreeCAD Path / RS274NGC):
-- Coordinates are absolute, in mm and degrees.
-- Arc centre offsets I, J, K are relative to the arc start point.
-- Plane selection: G17 = XY (normal +Z), G18 = ZX (normal +Y),
-  G19 = YZ (normal +X). G2 is clockwise and G3 counter-clockwise, seen
-  from the positive end of the plane normal looking toward the origin.
-  For G18 that is the view with Z to the right and X up.
+Path commands ((name, params) pairs) to motion segments: absolute mm and degrees, IJK
+relative to the arc start, G2/G3 seen from the plane normal's positive end (docs/DESIGN.md).
 """
 
 import math
@@ -186,30 +176,9 @@ class MotionInterpreter:
     TINY = 1e-12
 
     def _g76(self, params, op, index):
-        """
-        Expand a G76 threading cycle into its passes, as LinuxCNC's
-        interpreter does (rs274ngc interp_convert.cc, convert_threading_cycle
-        and threading_pass), in the ZX plane with X as a radius:
-        - the drive line is the current X, the thread starts at the current Z
-          and ends at Z; I is the thread peak's offset from the drive line
-          (negative: external), J the first cut's depth beyond the peak, K the
-          full depth;
-        - cut depths |I| + J, then |I| + J * n^(1/R) for passes n = 2, 3, ...
-          while short of |I| + K (R below 1 or absent: 1), then H + 1 passes at
-          full depth;
-        - each pass is shifted along the drive line by (depth - |I|) tan Q
-          (Q absent: 0), toward where the thread starts; all end on the
-          finished flank at Z + K tan Q - shift;
-        - a pass: rapid back (out by the depth still to go) to the shifted
-          start, rapid in to the cut depth, a spindle-synchronized cut at P
-          per revolution to the end, rapid out; with an entry taper (L1, L3)
-          the way in and with an exit taper (L2, L3) the end of the cut are
-          synchronized tapers over E along the drive line, out to the crest,
-          continuing the same helix (their pitch is scaled so the advance per
-          revolution along Z stays P);
-        - every pass starts D degrees past the index (D's magnitude); at the
-          end, a rapid to the end of the drive line.
-        """
+        """Expand a G76 cycle into its passes as LinuxCNC's convert_threading_cycle does: depths
+        |I| + J * n^(1/R) up to |I| + K then H + 1 full passes, each shifted by (depth - |I|) tan Q,
+        E/L entry and exit tapers continuing the helix, D degrees past the index."""
         st = self.state
         if any(st.pos[i] is None for i in LINEAR):
             self._diag("thread", op, index, "G76 before the position is known: not simulated")
@@ -299,18 +268,9 @@ class MotionInterpreter:
         return moves
 
     def _cycle(self, n, params, op, index):
-        """
-        Expand a canned drilling cycle (G81, G82, G83, G73) into moves, as
-        LinuxCNC's G-code reference describes them: along the selected
-        plane's normal (Z in G17); preliminary motion (rapid to R if below
-        it, rapid to the cycle's position in the plane, rapid to R); then
-        G81/G82 feed to the bottom (G82's dwell moves nothing), G83 pecks of
-        Q, rapid out to R after each and back down to the peck clearance
-        above where it reached, G73 pecks of Q backing off the clearance
-        only; finally a rapid to clear Z: the position before the series
-        under G98 if that is above R, else R. R is sticky, and Z and Q
-        within a series.
-        """
+        """Expand G81/G82/G83/G73 into moves along the plane's normal as LinuxCNC describes them:
+        preliminary rapids to R, feed or pecks of Q (G83 out to R, G73 back off the clearance),
+        then a rapid to the old position (G98, if above R) or R. R, Z and Q are sticky."""
         st = self.state
         u, v, k = PLANES[st.plane]
         cyc = st.cycle
@@ -437,10 +397,8 @@ class MotionInterpreter:
                 if k <= 0:
                     self._diag("thread", op, index, "G33 without a positive K (distance per revolution)")
                     continue
-                # LinuxCNC (tp.c): a synchronized move right after another
-                # continues its helix ("save the spindle position so the next
-                # synced move can be in the right place"); only a fresh sync
-                # waits for the index, and then D's magnitude past it
+                # as LinuxCNC's tp.c: a synchronized move right after another continues
+                # its helix; only a fresh sync waits for the index, then D past it
                 a0 = st.sync if st.sync is not None else abs(float(params.get("D", 0.0)))
                 m = Move(THREAD, start_t, end_t, op, index, None, pitch=k, start_angle=a0)
                 st.sync = a0 + 360.0 * m.linear_length / k

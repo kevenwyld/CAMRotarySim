@@ -1,17 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Rotary stock model: a cylindrical height field R(theta, s).
-
-R[i, j] is the remaining outer radius at angle theta_i and axial position
-s_j about a rotary axis, Rin[i, j] the inner radius (a bore; 0 where the
-stock is solid to the axis). Material lies between Rin and R; a cell with
-R <= Rin is empty (cut through, or faced away).
-
-- Turning lowers R for every theta (the workpiece spins), so an
-  axisymmetric stock uses n_theta = 1.
-- Threading lowers R at one angle at a time (n_theta > 1).
-Milling doesn't use this model: a pocket's walls aren't radial, so it
-cuts a distance grid instead (milling.VoxelStock).
+Rotary stock: outer radius R[theta, s] and bore radius Rin[theta, s] about an axis, material
+between them. Turning uses n_theta = 1, threading more; milling uses milling.VoxelStock.
 """
 
 import math

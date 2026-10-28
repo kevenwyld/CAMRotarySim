@@ -6,10 +6,8 @@ import FreeCADGui
 from PySide import QtCore
 
 COMMAND = "CAM_RotarySim"
-# CAM's simulator list in the CAM menu and the "Tool Commands" toolbar is
-# followed directly by CAM_Inspect, whichever simulator the preferences put
-# first (FreeCAD main, Mod/CAM/InitGui.py), so inserting before it places
-# this command right after the simulators.
+# CAM_Inspect follows the simulators in the CAM menu and "Tool Commands" toolbar,
+# so inserting before it puts this command right after them
 ANCHOR = "CAM_Inspect"
 
 
@@ -36,12 +34,8 @@ class CommandRotarySim:
 
 
 class Manipulator:
-    """
-    Adds the command to the CAM menu and toolbar. FreeCAD rebuilds menus on
-    every workbench switch and re-applies manipulators each time, so the
-    entries persist; in other workbenches the anchor is absent and the
-    entries are no-ops.
-    """
+    """Adds the command to the CAM menu and toolbar; a manipulator survives FreeCAD's
+    menu rebuilds, and is a no-op where the anchor is absent."""
 
     def modifyMenuBar(self):
         return [{"insert": COMMAND, "menuItem": ANCHOR}]

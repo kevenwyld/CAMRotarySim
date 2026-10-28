@@ -548,14 +548,8 @@ class TaskPanel:
         self.update_all(report=False)
 
     def _tick_samples(self):
-        """
-        Samples for one tick: SAMPLES_PER_TICK x the speed. A rotary move
-        (an index between work planes) is one sample per degree; it goes at
-        ROTARY_DEG_PER_TICK x the speed, so it is seen turning, and a tick
-        stops where one begins. Fractions carry over to the next tick, so
-        speeds below 1 keep their rate (x0.25: 5 samples a tick, a rotary
-        index 0.75 degree a tick on average).
-        """
+        """Samples for one tick: SAMPLES_PER_TICK x speed, or ROTARY_DEG_PER_TICK x speed during a
+        rotary index (a tick stops where one begins); fractions carry over for speeds below 1."""
         speed = SPEEDS[self.speed_index]
         sim = self.sim
         rate = speed * SAMPLES_PER_TICK

@@ -1,22 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Thread check: find the threads a simulation cut and measure them.
-
-Measured on the simulated stock, over whole pitches in the interior of the
-thread (away from its ends), on the outside for an external thread and on
-the bore for an internal one:
-- major and minor diameter: the largest and smallest radius per angle
-  (median over angles); crests and roots swap between external and internal;
-- pitch diameter: where the groove and the ridge are equally wide. Over a
-  whole number of pitches that is the median radius, which needs no
-  assumption about the profile. When a thread is so shallow (or deep) that
-  the groove is narrower (wider) than the ridge even at the crests (roots),
-  that level lies outside the material; it is then extrapolated along the
-  flanks, which are straight, from the groove's width at two radii.
-
-Compared, when the op provides them (CAM Lathe Turning Turn Thread), with the
-pitch diameter range and major diameter range in its ThreadReport, and the
-programmed root with ThreadDiameter / 2 - ThreadDepth.
+Find and measure the threads a simulation cut: major, minor and pitch diameter (the median
+radius over whole pitches) on the stock, compared with the Turn Thread op's ThreadReport.
 """
 
 import math

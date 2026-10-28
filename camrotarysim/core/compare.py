@@ -1,17 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Quality check: compare the simulated stock with the part.
-
-- part_profile(): the part's outer radius per axial column, from section
-  polylines of the Job model in the XZ plane.
-- reachable_profile(): the best result this tool shape can produce on this
-  part from outside (a 1D morphological opening of the part by the tool's
-  lower envelope). Material the tool can't reach without cutting into the
-  part, such as an undercut steeper than the insert's trailing edge, stays
-  above this profile whatever the path does.
-- compare(): deviation and a class per column:
-    OK, GOUGE (cut into the part), UNCUT (left by the path, reachable),
-    UNREACHABLE (left because the tool shape can't get there).
+Quality check: part profiles per axial column, the profile a tool shape can reach
+(a 1D opening of the part by the tool's lower envelope), and the per-column classes.
 """
 
 import math
@@ -25,12 +15,8 @@ CLASS_NAMES = {OK: "ok", GOUGE: "gouge", UNCUT: "uncut", UNREACHABLE: "unreachab
 
 
 def bulge_segments_to_polyline(segments, ccw_positive=True, max_seg_angle=2.0):
-    """
-    (x0, z0, x1, z1, bulge) segments -> list of (x, z) points.
-    bulge = tan(included_angle / 4). With ccw_positive, a positive bulge is
-    counter-clockwise in the view with Z to the right and X up (the G18
-    view); otherwise clockwise.
-    """
+    """(x0, z0, x1, z1, bulge) segments -> (x, z) points; bulge = tan(angle / 4),
+    positive = counter-clockwise in the G18 view (Z right, X up) when ccw_positive."""
     pts = []
     for x0, z0, x1, z1, b in segments:
         if not pts or math.dist(pts[-1], (x0, z0)) > 1e-9:
@@ -90,12 +76,8 @@ def part_profile(polylines, s, side=1.0):
 
 
 def part_inner_profile(polylines, s, side=1.0):
-    """
-    The part's bore radius per column (0 where it is solid to the axis or
-    absent), from section polylines: along the line Z = s on one side of the
-    axis, an odd number of crossings means material reaches the axis, an
-    even number (two or more) that it starts at the first crossing.
-    """
+    """The part's bore radius per column (0 where solid or absent): an even number of
+    section crossings at Z = s means the material starts at the first one."""
     s = np.asarray(s, dtype=float)
     hits = [[] for _ in range(len(s))]
     for pl in polylines:
@@ -122,12 +104,8 @@ def part_inner_profile(polylines, s, side=1.0):
 
 
 def reachable_bore(part_in, part_out, s, tool):
-    """
-    Largest bore radius per column an internal tool can leave without
-    cutting the part, approaching from the axis: reachable_profile() on the
-    mirrored problem (radius r -> C - r, the tool mirrored back to external).
-    Only meaningful where the part is present (part_out > 0).
-    """
+    """Largest bore radius per column an internal tool can leave: reachable_profile()
+    on the mirrored problem (r -> C - r). Only where the part is present."""
     part_in = np.asarray(part_in, dtype=float)
     present = np.asarray(part_out) > 0
     C = float(np.max(part_out)) + 1.0
@@ -137,12 +115,8 @@ def reachable_bore(part_in, part_out, s, tool):
 
 
 def compare_bore(stock_in, part_in, part_out, s, gouge_tol=0.01, uncut_tol=0.05, reachable=None, thread_zones=()):
-    """
-    The bore against the part's: gouge where the stock's bore is wider than
-    the part's (including a hole where the part is solid), uncut where it is
-    narrower, unreachable where the internal tools can't get there. Only
-    where the part is present.
-    """
+    """The bore against the part's, where the part is present: gouge where wider,
+    uncut where narrower, unreachable where no internal tool can get there."""
     stock_in = np.asarray(stock_in, dtype=float)
     part_in = np.asarray(part_in, dtype=float)
     present = np.asarray(part_out) > 0

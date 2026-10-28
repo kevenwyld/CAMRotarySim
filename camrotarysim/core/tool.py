@@ -1,36 +1,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Turning tool outline in the lathe XZ plane.
-
-The outline is a closed polygon in (x, z), relative to the tool's control
-point, the point the path is programmed to. For CAM Lathe Turning ops that
-is the insert's imaginary tip: the nose centre is at (x + r, z + r).
-
-The outline normally comes from the tool solid of the op's ToolController
-(sectioned in the XZ plane by the FreeCAD adapter). from_iso() and
-from_threading() build it from the shape parameters, as a fallback and
-for tests.
-
-Control point by shape (CAM Lathe Turning TurnToolShapes.py and shape files):
-- Isoshape: the shape origin is the sharp corner; paths are programmed to
-  the imaginary tip, the nose centre minus (r, r) (REF_IMAGINARY_TIP);
-- Threading, Grooving, FullRadius: the shape origin is the point the path
-  is programmed to (REF_ORIGIN): the profile's sharp point for threading,
-  the edge's lowest point at the chuck-side flank for grooving and full
-  radius blades.
-- CAM's Drill (and other revolved milling shapes): a revolution about Z
-  with the tip at the origin, the body toward +Z; the tip is programmed
-  (REF_ORIGIN). On a lathe it drills along the spindle axis at X 0, as an
-  internal tool.
-
-Isoshape conventions (checked against isoshape.fcstd, whose sketch binds
-TipAngle, -Rotation, EdgeLength and TipRadius, and against
-liblathe Tool.get_tool_cutting_angle()):
-- the shape origin is the theoretical sharp corner of the active tip;
-- the two edges at the active tip leave it at Rotation - TipAngle/2 and
-  Rotation + TipAngle/2, measured from +Z toward +X;
-- the insert is a rhombus with side EdgeLength between sharp corners and
-  every corner rounded with TipRadius.
+Tool outline in the lathe XZ plane: a closed polygon relative to the control point the path
+is programmed to (Isoshape: the imaginary tip, nose centre minus (r, r); other shapes: the
+shape origin). Control points and Isoshape conventions: docs/DESIGN.md.
 """
 
 import math
@@ -106,13 +78,8 @@ class ToolOutline:
     @classmethod
     def from_section(cls, edges, tip_radius=None, source="tool shape", tol=1e-4,
                      reference=REF_IMAGINARY_TIP):
-        """
-        Build from section edges of the tool solid. edges: list of dicts with
-        'kind' ('line' | 'arc' | ...), 'points' [(x, z), ...] and, for arcs,
-        'centre' (x, z) and 'radius'. Coordinates are the tool shape's own.
-        reference: REF_IMAGINARY_TIP (Isoshape) or REF_ORIGIN (the shape
-        origin is the control point).
-        """
+        """From section edges of the tool solid: dicts with 'kind', 'points' [(x, z)] and, for arcs,
+        'centre' and 'radius', in the shape's coordinates; reference picks the control point."""
         loops = chain_edges(edges, tol)
         if not loops:
             raise ValueError("tool section is empty")
@@ -177,12 +144,8 @@ class ToolOutline:
 
     @classmethod
     def from_threading(cls, profile_angle, tip_radius, width, height=None, nose_segments=16):
-        """
-        Threading insert from the Threading shape parameters: a V of
-        profile_angle pointing toward the axis (-X), symmetric about Z = 0,
-        with tip_radius at its tip, flanks up to the insert's width, then
-        straight. The control point is the V's sharp point, at the origin.
-        """
+        """Threading insert from its shape parameters: a V of profile_angle toward -X, symmetric
+        about Z = 0, tip_radius at the tip, straight above the width; control point the sharp point."""
         half = math.radians(profile_angle / 2.0)
         r = max(float(tip_radius), 0.0)
         w2 = float(width) / 2.0
@@ -218,12 +181,8 @@ class ToolOutline:
         return cls(pts, (0.0, 0.0), None, 0.0, "Drill parameters")
 
     def mirrored(self):
-        """
-        The outline mirrored in X about the control point: an external tool
-        used inside (boring, internal threading), with its body toward the
-        axis. CAM Lathe Turning bores by mirroring external turning, so the
-        same insert's reference point mirrors with it.
-        """
+        """The outline mirrored in X about the control point, for an external tool used inside
+        (CAM Lathe Turning bores by mirroring external turning)."""
         m = ToolOutline.__new__(ToolOutline)
         m.points = self.points * np.array([-1.0, 1.0])
         if _polygon_area(m.points) < 0:

@@ -80,13 +80,8 @@ def _runs(mask):
 
 
 def revolve(stock, colours=None, segments=72, tol=1e-4, inner_colours=None, min_wall=1e-6):
-    """
-    Mesh of the stock: for each run of columns that still hold material, the
-    outside, the bore (if any) and the two ends (rings, or discs without a
-    bore), as one closed surface with outward normals.
-    Returns (vertices (n, 3), triangles (m, 3) int, vertex colours (n, 3)).
-    The axis is the stock axis (must be Z for now: vertices are global XYZ).
-    """
+    """Closed mesh of the stock (outside, bore, end rings or discs) per run of columns with
+    material, outward normals, axis Z. Returns (vertices, triangles, vertex colours)."""
     if colours is None:
         colours = column_colours(stock)
     if inner_colours is None:

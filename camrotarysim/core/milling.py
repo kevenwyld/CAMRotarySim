@@ -1,24 +1,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
-Milling, indexed or rotary, in the workpiece frame.
-
-The turning stock (one radius per angle and axial position about the
-rotary axis) can't hold milled features: a pocket in a flat face has walls
-parallel to the tool axis, not radial, so a ray from the axis goes through
-material, the pocket and material again. Milling uses a signed-distance
-grid instead: phi at grid points is the distance to the remaining
-material's surface, positive inside. Cutting is CSG subtraction,
-phi = min(phi, distance outside the cutter), exact at every tool position;
-the surface is rebuilt at phi = 0 with sub-voxel interpolation (surface.py).
-
-Frames (CAM's own, Path/Post/Processor.py and TiltedWorkPlane.py): an op on
-a work plane stores its path in the plane's frame and carries the plane as
-its Placement, so world = Placement * local and the tool axis is
-Placement.Rotation * Z. A table rotary axis turns the workpiece:
-machine = R(axis, A) * world (Path/Base/Generator/rotation.py
-compute_rotation_matrix), so a position with an A word is in the workpiece
-frame at R(axis, -A) * machine. Indexed ops have no A words; the machine's A
-is the one that turns the plane's normal to +Z (needed_angle()).
+Milling, indexed or rotary, on a signed-distance grid (phi positive inside material):
+cutting is phi = min(phi, distance outside the cutter). Frames: world = Placement * local,
+machine = R(axis, A) * world; see docs/DESIGN.md.
 """
 
 import math
@@ -155,13 +139,8 @@ class VoxelStock:
 
 
 class MillingKinematics:
-    """
-    A cutter whose tip is the programmed point and whose axis is the op's
-    frame Z, in the workpiece frame. frame: (R 3x3, t 3) of the op's
-    Placement (world = R * local + t). The rotary axis' word (A, B or C) in
-    a position turns the workpiece: world positions are rotated by -angle
-    about the axis into the workpiece frame.
-    """
+    """A cutter with its tip at the programmed point and its axis the op frame's Z, in the
+    workpiece frame; frame = (R, t) of the op's Placement, a rotary word turns by -angle."""
 
     name = "milling"
 
@@ -240,12 +219,8 @@ def placement_frame(position, quaternion):
 
 
 def needed_angle(normal, axis):
-    """
-    The rotary angle (degrees) that turns a work plane's normal to +Z for a
-    table axis along `axis` (machine = R(axis, angle) * world), and how far
-    the normal is from what that axis can reach (0 when exact). Matches the
-    sign convention of CAM's compute_rotation_matrix.
-    """
+    """(angle in degrees turning the work plane's normal to +Z about `axis`, residual error);
+    sign convention of CAM's compute_rotation_matrix."""
     k = np.asarray(axis, dtype=float)
     k = k / np.linalg.norm(k)
     n = np.asarray(normal, dtype=float)
@@ -301,12 +276,8 @@ def compare_part(stock, part_phi, gouge_tol=0.01, uncut_tol=0.05, band=None):
 
 
 def vertex_colours(stock, verts, part_phi=None, gouge_tol=0.01, uncut_tol=0.05):
-    """
-    RGB per surface vertex: stock colour on the original stock surface, cut
-    colour where machined; with the part: red where the surface lies inside
-    it (allowing for surface nets chamfering sharp edges by up to ~0.3 of a
-    cell), amber where material is left beyond it.
-    """
+    """RGB per surface vertex: stock, cut, gouge (inside the part by more than the surface
+    nets' ~0.3 cell chamfer) or uncut (material left beyond the part)."""
     from .mesh import CLASS_COLOURS, CUT_COLOUR, STOCK_COLOUR
     from .compare import GOUGE, UNCUT
     from .surface import sample
