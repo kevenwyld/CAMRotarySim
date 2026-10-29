@@ -5,7 +5,7 @@ kinematics to the stock and records events. Supports playback in steps,
 seeking (backwards too, via per-move snapshots) and reset.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Sequence
 
 import math
@@ -52,10 +52,9 @@ class Simulation:
                  rapid_tol=0.001, collision_tol=0.001, kinematics=None, parting_min_radius=1.0,
                  thread_angles=120, snapshot_budget=96 * 2 ** 20):
         self.stock = stock
-        self.ops = ops
-        for op in ops:
-            if op.internal and not getattr(op.tool, "internal", False):
-                op.tool = op.tool.mirrored()
+        # internal ops get a mirrored tool on a copy: the caller's OpInputs are left alone
+        self.ops = [replace(op, tool=op.tool.mirrored())
+                    if op.internal and not getattr(op.tool, "internal", False) else op for op in ops]
         self.step = float(step)
         self.angle_step = float(angle_step)
         self.rapid_tol = rapid_tol
@@ -101,6 +100,8 @@ class Simulation:
         self._snap_bytes = 0
         self.events: List[Event] = []
         self._move_events = {}
+        self._move_start = None      # stock profiles when the current move began, and its index
+        self._move_start_index = None
         self.position = self.moves[0].start if self.moves else None
 
     @property
@@ -253,7 +254,7 @@ class Simulation:
         op = self.ops[move.op]
         kin = self._kinematics(move.op)
         pts = self._samples[mi][first:last]
-        if first == 0 or getattr(self, "_move_start_index", None) != mi:
+        if first == 0 or self._move_start_index != mi:
             # the stock when the move began: a rapid's cut is measured against it
             self._move_start = ((self.stock.profile(), self.stock.inner_profile())
                                 if self.turning else None)
