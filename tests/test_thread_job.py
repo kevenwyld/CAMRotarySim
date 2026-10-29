@@ -109,25 +109,12 @@ class TestG76(unittest.TestCase):
         self.assertAlmostEqual(r.pitch_diameter, 11.2592, 3)
 
     def test_run_out(self):
-        # with an exit taper the G76 and LibLathe's explicit passes agree once the explicit taper's K
-        # keeps the lead along Z (as G76's taper pitch does); as written they differ in the run-out
-        import math
+        # with an exit taper: LibLathe's explicit passes (since ffd5f7a the tapered G33's K follows the
+        # move, so its lead along Z is the pitch) and the G76 (LinuxCNC's taper pitch) cut the same thread
         sim76, st76 = self.run_file("TurnThread_G76_runout.nc")
-        cmds, pos = [], {}
-        for name, p in parse_gcode_text(_load("TurnThread_G33_runout.nc")):
-            p = dict(p)
-            if name == "G33" and "X" in pos and abs(p.get("X", pos["X"]) - pos["X"]) > 1e-9:
-                p["K"] *= math.hypot(p["Z"] - pos["Z"], p["X"] - pos["X"]) / abs(p["Z"] - pos["Z"])
-            cmds.append((name, p))
-            pos.update({k: p[k] for k in "XZ" if k in p})
-        sd = json.loads(_load("stock.json"))
-        st = RotaryStock(sd["z_min"], sd["z_max"], 0.05, sd["radius"])
-        tool = ToolOutline.from_section(json.loads(_load("tool_threading_section.json"))["edges"], 0.05,
-                                        reference=REF_ORIGIN)
-        Simulation(st, [OpInput("t", cmds, tool)]).run_to_end()
-        self.assertLess(float(np.max(np.abs(st76.R - st.R))), 1e-6)
-        _sim33, st33 = self.run_file("TurnThread_G33_runout.nc")
-        self.assertGreater(float(np.max(np.abs(st76.R - st33.R))), 0.1)
+        sim33, st33 = self.run_file("TurnThread_G33_runout.nc")
+        self.assertEqual(sim76.events, [])
+        self.assertLess(float(np.max(np.abs(st76.R - st33.R))), 1e-6)
 
 
 if __name__ == "__main__":
