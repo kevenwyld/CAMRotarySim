@@ -63,6 +63,10 @@ class Console:
     def PrintMessage(cls, s):
         cls.messages.append(("message", s))
 
+    @classmethod
+    def PrintLog(cls, s):
+        cls.messages.append(("log", s))
+
 
 # ---------------------------------------------------------------------- Part
 class Circle:

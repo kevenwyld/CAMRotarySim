@@ -6,6 +6,7 @@ The result is drawn in the active 3D view.
 """
 
 import time
+import traceback
 
 import numpy as np
 
@@ -141,8 +142,6 @@ class TaskPanel:
         self.spin_hole_depth.setToolTip(translate("Starting hole depth from the stock's front"))
         row_hole = QtGui.QHBoxLayout()
         for widget in (self.combo_hole, self.spin_hole_d, self.spin_hole_depth):
-            signal = widget.currentIndexChanged if widget is self.combo_hole else widget.valueChanged
-            signal.connect(self.on_hole_changed)
             row_hole.addWidget(widget)
         grid.addWidget(QtGui.QLabel(translate("Starting hole")), 5, 0)
         grid.addLayout(row_hole, 5, 1)
@@ -161,13 +160,9 @@ class TaskPanel:
         self.spin_retract.setToolTip(translate("Retract Z (machine frame, work coordinates)"))
         row_r = QtGui.QHBoxLayout()
         for widget in (self.combo_retract, self.spin_retract):
-            signal = widget.currentIndexChanged if widget is self.combo_retract else widget.valueChanged
-            signal.connect(self.on_retract_changed)
             row_r.addWidget(widget)
         grid.addWidget(QtGui.QLabel(translate("Retract before indexing")), 7, 0)
         grid.addLayout(row_r, 7, 1)
-        self.on_retract_changed()
-        self.on_hole_changed()
         lay.addLayout(grid)
 
         self.slider = QtGui.QSlider(QtCore.Qt.Orientation.Horizontal)
@@ -224,6 +219,15 @@ class TaskPanel:
         self.report.setFont(font)
         self.report.setMinimumHeight(180)
         lay.addWidget(self.report)
+
+        # connected once every widget exists: the handlers mark the simulation dirty
+        self.combo_hole.currentIndexChanged.connect(self.on_hole_changed)
+        self.spin_hole_d.valueChanged.connect(self.on_hole_changed)
+        self.spin_hole_depth.valueChanged.connect(self.on_hole_changed)
+        self.combo_retract.currentIndexChanged.connect(self.on_retract_changed)
+        self.spin_retract.valueChanged.connect(self.on_retract_changed)
+        self.on_retract_changed()
+        self.on_hole_changed()
         return w
 
     @staticmethod
@@ -240,13 +244,11 @@ class TaskPanel:
         custom = self.combo_hole.currentIndex() == 2
         self.spin_hole_d.setEnabled(custom)
         self.spin_hole_depth.setEnabled(custom)
-        if hasattr(self, "lbl_status"):
-            self.mark_dirty()
+        self.mark_dirty()
 
     def on_retract_changed(self, *_):
         self.spin_retract.setEnabled(self.combo_retract.currentIndex() == 2)
-        if hasattr(self, "lbl_status"):
-            self.mark_dirty()
+        self.mark_dirty()
 
     def retract_setting(self):
         i = self.combo_retract.currentIndex()
@@ -377,6 +379,7 @@ class TaskPanel:
             self.dirty = False
         except Exception as e:
             FreeCAD.Console.PrintError("CAMRotarySim: %s\n" % e)
+            FreeCAD.Console.PrintLog("CAMRotarySim: %s" % traceback.format_exc())
             self.report.setPlainText(translate("Could not build the simulation:") + "\n%s" % e)
             self.sim = None
             return False
@@ -415,6 +418,7 @@ class TaskPanel:
             self.dirty = False
         except Exception as e:
             FreeCAD.Console.PrintError("CAMRotarySim: %s\n" % e)
+            FreeCAD.Console.PrintLog("CAMRotarySim: %s" % traceback.format_exc())
             self.report.setPlainText(translate("Could not build the simulation:") + "\n%s" % e)
             self.sim = None
             return False

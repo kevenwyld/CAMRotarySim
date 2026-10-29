@@ -65,7 +65,6 @@ class Move:
     @property
     def linear_length(self):
         if self.kind == ARC:
-            u, v, _ = self.plane
             planar = abs(self.sweep) * self.radius
             axial = self.end[self.plane[2]] - self.start[self.plane[2]]
             return math.hypot(planar, axial)

@@ -133,7 +133,7 @@ class SimScene:
         self.work_xf.rotation.setValue(coin.SbVec3f(*map(float, axis)), math.radians(float(angle_deg)))
         self.work_xf.center.setValue(*map(float, origin))
 
-    def set_tool_pose(self, tip, tool_axis, control_in_shape=(0.0, 0.0)):
+    def set_tool_pose(self, tip, tool_axis):
         """Tool (a CAM shape: tip at its origin, axis +Z) at tip, along tool_axis (machine frame)."""
         rot = coin.SbRotation(coin.SbVec3f(0.0, 0.0, 1.0), coin.SbVec3f(*map(float, tool_axis)))
         self.tool_xf.rotation.setValue(rot)
