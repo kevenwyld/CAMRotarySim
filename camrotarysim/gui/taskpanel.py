@@ -471,8 +471,7 @@ class TaskPanel:
         """The tool's solid (or a prism of its outline), mirrored about the control point when used inside."""
         cx = outline.control_in_shape[0]
         try:
-            shape = tool.Shape.copy()
-            shape.Placement = FreeCAD.Placement()
+            shape, _y = fa.turning_tool_shape(tool)       # as sectioned: Y offset kept, X/Z reset
             pts, tris = shape.tessellate(0.02)
             if pts and tris:
                 v = np.array([(p.x, p.y, p.z) for p in pts])

@@ -240,10 +240,36 @@ class TestAdapter(unittest.TestCase):
             self.assertEqual(outline.control_in_shape, (0.0, 0.0))
             self.assertEqual(tool.Shape.slices, [])
 
-    def _iso_tool(self, bbox, sections, label, p):
+    def test_tool_models_with_a_y_offset_in_the_placement(self):
+        # made with 0.17.4 to 0.18.0 (or rebuilt from those shapes): the geometry as before 0.17.4 (insert
+        # under Y 0), the Placement Y +1 puts the rake face at Y 0; FreeCAD shows it there, and so must the
+        # simulator, so the offset is kept (real_turning_test2_1.FCStd's VBMT in its holder)
+        import json
+        with open(os.path.join(HERE, "data", "holders", "tools.json")) as f:
+            v = json.load(f)["placed_0_18_0"]
+        tool = self._iso_tool(v["raw_bbox"], [((-1.0, 0.0), v["insert"]), ((0.0, 12.7), v["holder"])],
+                              "VBMT 16 04 04 in a 3deg holder", v["params"], placement_y=v["placement_y"])
+        tool.Shape.mesh = ([(0.0, -1.0, 0.0), (1.0, 12.7, 0.0), (0.0, 0.0, 1.0)], [(0, 1, 2)])
+        shape, y = self.fa.turning_tool_shape(tool)
+        self.assertEqual(y, 1.0)
+        self.assertAlmostEqual(shape.BoundBox.YMin, 0.0)                 # the rake face at Y 0, as shown
+        pts, _tris = shape.tessellate(0.02)                               # what the 3D view draws
+        self.assertEqual([p.y for p in pts], [0.0, 13.7, 1.0])
+        outline, note = self.fa.tool_outline(tool)
+        self.assertIn("an older tool model, its rake face set at Y 0 by a Y +1 Placement", note)
+        self.assertAlmostEqual(outline.nose_radius, 0.4, 6)
+        self.assertLess(outline.xmax, 40.0)      # the 16 mm insert (27 in X), not the 80 mm holder
+        self.assertEqual(tool.Shape.slices, [])                           # a copy was sliced
+        # X, Z and rotation in a tool's Placement are not applied: the origin stays the programmed point
+        tool.Shape.Placement.Base.x = 25.0
+        shape, y = self.fa.turning_tool_shape(tool)
+        self.assertEqual((shape.Placement.Base.x, shape.Placement.Base.y), (0.0, 1.0))
+
+    def _iso_tool(self, bbox, sections, label, p, placement_y=0.0):
         q = lambda v: types.SimpleNamespace(Value=v)  # noqa: E731
         return types.SimpleNamespace(Label=label, ShapeID="isoshape",
-                                     Shape=fakefreecad.Shape([], fakefreecad.BoundBox(*bbox), sections=sections),
+                                     Shape=fakefreecad.Shape([], fakefreecad.BoundBox(*bbox), sections=sections,
+                                                             placement_y=placement_y),
                                      TipRadius=q(p["TipRadius"]), EdgeLength=q(p["EdgeLength"]),
                                      TipAngle=q(p["TipAngle"]), Rotation=q(p["Rotation"]))
 

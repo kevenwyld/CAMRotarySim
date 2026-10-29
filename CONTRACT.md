@@ -34,12 +34,15 @@ in mm both work.
 | `grooving`, `fullradius` | shape origin: the edge's lowest point at the chuck-side flank | none |
 | `drill`, `reamer` (CAM) | tip at the origin, body toward +Z, cutting at X 0 | `Diameter`, `TipAngle` (118), `Length` |
 
-The outline is the tool solid's section, with the solid's Placement reset, at Y +0.01:
-just inside the rake face (Y = 0) of tool models from 0.18.1 on, insert and holder on
-+Y. If that gives no edges, or an Isoshape section has no nose of TipRadius, it is taken
-at Y -0.01: older models, whose Isoshape insert hangs under Y = 0 (those made with 0.17.4
-to 0.18.0 carry their Y offset in the Placement, which is reset). The report notes such
-tools; CAM menu > Rebuild Turning Tool Models updates them. Details in `docs/DESIGN.md`.
+The outline is the tool solid's section at Y +0.01, just inside the rake face (Y = 0) of
+tool models from 0.18.1 on, insert and holder on +Y. The solid is placed as FreeCAD shows
+it in Y only: the Placement's Y offset (+1 or +1.5 on models made with 0.17.4 to 0.18.0,
+which puts their rake face at Y 0) is kept, X, Z and rotation are reset, so the origin
+stays the programmed point. If +0.01 gives no edges, or an Isoshape section has no nose
+of TipRadius, it is taken at Y -0.01: models from before 0.17.4, whose Isoshape insert
+hangs under Y = 0. The report notes older models; CAM menu > Rebuild Turning Tool
+Models updates them. The 3D view draws the solid placed the same way. Details in
+`docs/DESIGN.md`.
 
 ## Path
 

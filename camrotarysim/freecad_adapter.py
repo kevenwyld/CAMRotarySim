@@ -117,17 +117,30 @@ def cutting_planes(bb):
     return ys or [(bb.YMin + bb.YMax) / 2.0]
 
 
+def turning_tool_shape(tool):
+    """
+    (shape, y_offset): a copy of the tool's solid placed as FreeCAD shows it in Y only. Tool models
+    made with CAM Lathe Turning 0.17.4 to 0.18.0 carry a Y offset in their Placement (+1, or +1.5)
+    that puts the rake face at Y 0; X, Z and rotation are reset, so a tool moved in the document
+    can't move the point the path is programmed to (its origin).
+    """
+    shape = tool.Shape.copy()
+    y = float(shape.Placement.Base.y)
+    shape.Placement = FreeCAD.Placement(FreeCAD.Vector(0.0, y, 0.0), FreeCAD.Rotation())
+    return shape, y
+
+
 def tool_outline(tool):
-    """(ToolOutline, note) from the tool solid's XZ section at the first of cutting_planes() with
-    edges (and, for an Isoshape, a nose of TipRadius), Placement reset; else from the parameters."""
+    """(ToolOutline, note) from the tool solid's XZ section (placed by turning_tool_shape()) at the
+    first of cutting_planes() with edges (and, for an Isoshape, a nose of TipRadius); else from the
+    parameters."""
     tip_r = _value(tool.TipRadius) if hasattr(tool, "TipRadius") else None
     reference = tool_reference(tool)
     note = ""
     shape = getattr(tool, "Shape", None)
     if shape is not None and not shape.isNull():
         try:
-            shape = shape.copy()
-            shape.Placement = FreeCAD.Placement()
+            shape, y_offset = turning_tool_shape(tool)
             planes = cutting_planes(shape.BoundBox)
             for k, y in enumerate(planes):
                 wires = shape.slice(Y_AXIS, y)
@@ -138,6 +151,9 @@ def tool_outline(tool):
                     if k and y == CUTTING_PLANES_Y[1]:
                         note = ("an older tool model, cutting plane at Y %g (CAM menu > Rebuild Turning Tool "
                                 "Models updates it)" % y)
+                    elif abs(y_offset) > 1e-9:
+                        note = ("an older tool model, its rake face set at Y 0 by a Y %+g Placement "
+                                "(CAM menu > Rebuild Turning Tool Models updates it)" % y_offset)
                     return ToolOutline.from_section(edges, tip_r, "tool shape of %s" % tool.Label,
                                                     reference=reference), note
             note = ("tool shape's section at Y %s has no nose of radius %g"

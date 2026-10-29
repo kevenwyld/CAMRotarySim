@@ -22,10 +22,16 @@ class Vector:
         self.x, self.y, self.z = float(x), float(y), float(z)
 
 
-class Placement:
+class Rotation:
     def __init__(self):
-        self.Rotation = types.SimpleNamespace(Angle=0.0, Q=(0.0, 0.0, 0.0, 1.0))
-        self.Base = Vector()
+        self.Angle = 0.0
+        self.Q = (0.0, 0.0, 0.0, 1.0)
+
+
+class Placement:
+    def __init__(self, base=None, rotation=None):
+        self.Rotation = rotation or Rotation()
+        self.Base = base or Vector()
 
 
 class BoundBox:
@@ -102,36 +108,45 @@ class Wire:
 class Shape:
     """A solid known only by its XZ section edges (at Y = section_y)."""
 
-    def __init__(self, section_edges, bbox, section_y=0.0, mesh=None, sections=None):
+    def __init__(self, section_edges, bbox, section_y=0.0, mesh=None, sections=None, placement_y=0.0):
         """
         section_edges: the section at Y = section_y; or sections: a list of
         ((y_min, y_max), edges), the section anywhere in that Y range (e.g.
-        an insert and the holder above it).
+        an insert and the holder above it). bbox, section_y and the ranges
+        are the raw geometry's; placement_y is a Y offset in the shape's
+        Placement (as Part, BoundBox and slice see the placed shape).
         """
         self.section_edges = section_edges
-        self.BoundBox = bbox
+        self.raw_bbox = bbox
         self.section_y = section_y
         self.sections = sections
-        self.Placement = Placement()
+        self.Placement = Placement(Vector(0.0, placement_y, 0.0))
         self.mesh = mesh
         self.slices = []
+
+    @property
+    def BoundBox(self):
+        b, dy = self.raw_bbox, self.Placement.Base.y
+        return BoundBox(b.XMin, b.YMin + dy, b.ZMin, b.XMax, b.YMax + dy, b.ZMax)
 
     def isNull(self):
         return False
 
     def copy(self):
-        return Shape(self.section_edges, self.BoundBox, self.section_y, self.mesh, self.sections)
+        return Shape(self.section_edges, self.raw_bbox, self.section_y, self.mesh, self.sections,
+                     self.Placement.Base.y)
 
     def slice(self, direction, d):
         assert (direction.x, direction.y, direction.z) == (0, 1, 0)
         self.slices.append(d)
+        d -= self.Placement.Base.y          # in the raw geometry
         if self.sections is not None:
             for (lo, hi), edges in self.sections:
                 if lo < d < hi:
                     return [Wire([Edge(e, d) for e in edges])]
             return []           # the plane misses the solid
         # a single fixture section stands for any plane within the shape's thickness
-        bb = self.BoundBox
+        bb = self.raw_bbox
         assert bb.YMin - 1e-9 <= d <= bb.YMax + 1e-9, "section plane Y=%g outside the shape" % d
         return [Wire([Edge(e, d) for e in self.section_edges])]
 
@@ -139,7 +154,8 @@ class Shape:
         if self.mesh is None:
             return [], []
         v, t = self.mesh
-        return [Vector(*p) for p in v], [tuple(f) for f in t]
+        dy = self.Placement.Base.y
+        return [Vector(p[0], p[1] + dy, p[2]) for p in v], [tuple(f) for f in t]
 
 
 def makeCompound(shapes):
@@ -232,7 +248,7 @@ class Control:
 
 def install():
     fc = types.ModuleType("FreeCAD")
-    fc.Vector, fc.Placement, fc.Console = Vector, Placement, Console
+    fc.Vector, fc.Placement, fc.Rotation, fc.Console = Vector, Placement, Rotation, Console
     fc.GuiUp = True
     fc.ActiveDocument = None
     groups = {}
