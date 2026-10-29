@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
 FreeCAD side: a CAM Job to simulation inputs for the core, read the way CAM's own
-SimulatorGL.py reads Jobs, ops, commands, tools, model and stock.
+SimulatorGL.py reads Jobs, ops, commands, tools, model and stock. CONTRACT.md lists
+what it assumes about CAM Lathe Turning.
 """
 
 import numpy as np

@@ -1,7 +1,7 @@
 # CAM Rotary Simulator: design and conventions
 
 Reference for the conventions the simulator relies on and how the code is laid out.
-The README is the user guide.
+The README is the user guide; CONTRACT.md lists what the adapter assumes about CAM Lathe Turning.
 
 ## Module map
 

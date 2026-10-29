@@ -93,7 +93,8 @@ op's Placement, as CAM's post reads them; a rotary word in a command turns the w
   flat and reported. The cutting length is CuttingEdgeHeight.
 - **Display:** "Part outline" shows the model as a see-through mesh.
 
-The conventions behind all of this are in [docs/DESIGN.md](docs/DESIGN.md).
+The conventions behind all of this are in [docs/DESIGN.md](docs/DESIGN.md); what the simulator
+assumes about CAM Lathe Turning ops and tools is in [CONTRACT.md](CONTRACT.md).
 
 ## Limits
 
