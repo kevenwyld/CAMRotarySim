@@ -43,7 +43,12 @@ tools; CAM menu > Rebuild Turning Tool Models updates them. Details in `docs/DES
 
 ## Path
 
-- Read through `PathUtils.getPathWithPlacement(op).Commands`; absolute mm and degrees.
+- Turning ops: read through `PathUtils.getPathWithPlacement(op).Commands`; absolute mm and
+  degrees.
+- Milling ops (CAM's own, not CAM Lathe Turning): `op.Path.Commands` as stored, local to the
+  op's work plane, placed by `op.Placement` (world = Placement x local, tool axis its Z), as
+  CAM's post reads them; `getPathWithPlacement` is not used, as it leaves arcs tilted out of
+  XY as they are.
 - Turning in G18 with X a radius (G7/G8 and G91 are reported, not applied).
 - Isoshape paths go to the imaginary tip; internal ops go to the mirrored tip
   (LibLathe bores by turning in a mirror). Threads are G33 passes (K the pitch) or a

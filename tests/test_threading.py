@@ -119,5 +119,18 @@ class TestThreading(unittest.TestCase):
         self.assertTrue(math.isfinite(sim.spindle_angle))
 
 
+class TestThreadReportLines(unittest.TestCase):
+    def test_minor_range_only_for_internal_threads(self):
+        # an external thread's class minor range is the basic profile's d1, not the root an insert cuts:
+        # it isn't compared, so it isn't printed either
+        for internal, shown in ((False, False), (True, True)):
+            zone = T.ThreadZone(0, "t", 1.75, -50.0, 0.0, 4.87, 9, internal=internal)
+            res = T.ThreadResult(zone, expected_pitch=(10.679, 10.829), expected_major=(11.701, 11.966),
+                                 expected_minor=(9.85, 10.07))
+            text = "\n".join(T.format_thread(res))
+            self.assertEqual("minor 9.850-10.070" in text, shown)
+            self.assertIn("major 11.701-11.966", text)
+
+
 if __name__ == "__main__":
     unittest.main()

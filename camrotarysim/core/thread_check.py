@@ -179,7 +179,7 @@ def format_thread(res):
         extra = ""
         if res.expected_major:
             extra += ", major %.3f-%.3f" % res.expected_major
-        if res.expected_minor:
+        if res.expected_minor and z.internal:      # external: the class's d1, not the root an insert cuts
             extra += ", minor %.3f-%.3f" % res.expected_minor
         lines.append("    op: pitch diameter %.3f-%.3f%s" % (res.expected_pitch + (extra,)))
     lines.append("    deepest pass: control point at diameter %.3f" % (2 * z.deepest)
