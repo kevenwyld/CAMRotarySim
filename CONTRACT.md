@@ -34,8 +34,12 @@ in mm both work.
 | `grooving`, `fullradius` | shape origin: the edge's lowest point at the chuck-side flank | none |
 | `drill`, `reamer` (CAM) | tip at the origin, body toward +Z, cutting at X 0 | `Diameter`, `TipAngle` (118), `Length` |
 
-The outline is the tool solid's section just under Y = 0 (the rake face on centre
-line), with the solid's Placement reset. Details in `docs/DESIGN.md`.
+The outline is the tool solid's section, with the solid's Placement reset, at Y +0.01:
+just inside the rake face (Y = 0) of tool models from 0.18.1 on, insert and holder on
++Y. If that gives no edges, or an Isoshape section has no nose of TipRadius, it is taken
+at Y -0.01: older models, whose Isoshape insert hangs under Y = 0 (those made with 0.17.4
+to 0.18.0 carry their Y offset in the Placement, which is reset). The report notes such
+tools; CAM menu > Rebuild Turning Tool Models updates them. Details in `docs/DESIGN.md`.
 
 ## Path
 

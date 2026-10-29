@@ -129,7 +129,7 @@ class Shape:
             for (lo, hi), edges in self.sections:
                 if lo < d < hi:
                     return [Wire([Edge(e, d) for e in edges])]
-            raise AssertionError("no fixture section at Y=%g" % d)
+            return []           # the plane misses the solid
         # a single fixture section stands for any plane within the shape's thickness
         bb = self.BoundBox
         assert bb.YMin - 1e-9 <= d <= bb.YMax + 1e-9, "section plane Y=%g outside the shape" % d

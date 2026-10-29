@@ -177,40 +177,75 @@ class TestAdapter(unittest.TestCase):
         self.assertIsNone(fa.machine_rotary_axis(job))
 
     def test_tool_with_holder(self):
-        # CAM Lathe Turning draws the holder in the tool's solid: the section must be the insert's plane
+        # holders drawn in the tool's solid (CAM Lathe Turning before 0.18.1): the insert hangs under the
+        # rake face, the holder on it; the section at +0.01 is the holder's (no nose), so -0.01 is used
         import json
         with open(os.path.join(HERE, "data", "holders", "tools.json")) as f:
             d = json.load(f)
-        q = lambda v: types.SimpleNamespace(Value=v)  # noqa: E731
         p = d["params"]
-
-        def tool(bbox, sections, label):
-            return types.SimpleNamespace(Label=label, ShapeID="isoshape",
-                                         Shape=fakefreecad.Shape([], fakefreecad.BoundBox(*bbox), sections=sections),
-                                         TipRadius=q(p["TipRadius"]), EdgeLength=q(p["EdgeLength"]),
-                                         TipAngle=q(p["TipAngle"]), Rotation=q(p["Rotation"]))
-
         t = d["turning"]
-        # the insert hangs under Y 0; the holder sits on it, Y 0 to 12
-        turning = tool(t["bbox"], [((-1.0, 0.0), t["insert"]), ((0.0, 12.0), t["holder"])], "iso turning insert 4")
+        turning = self._iso_tool(t["bbox"], [((-1.0, 0.0), t["insert"]), ((0.0, 12.0), t["holder"])],
+                                 "iso turning insert 4", p)
         outline, note = self.fa.tool_outline(turning)
-        self.assertEqual(note, "")
+        self.assertIn("an older tool model, cutting plane at Y -0.01", note)
         np.testing.assert_allclose(outline.control_in_shape, (0.0, 0.0), atol=1e-9)   # origin = imaginary tip
         self.assertAlmostEqual(outline.nose_radius, 0.4, 6)
         self.assertLess(outline.xmax, 10.0)                          # the insert, not the 80 mm holder
         self.assertEqual(turning.Shape.slices, [])                   # a copy was sliced
-        # the boring bar spans the insert's plane: its section is insert and bar, nose included
+        # the boring bar spans both planes: at +0.01 only the bar, at -0.01 insert and bar
         b = d["boring"]
-        boring = tool(b["bbox"], [((-6.0, 4.0), b["cutting_plane"])], "iso turning insert boring 4")
+        boring = self._iso_tool(b["bbox"], [((-1.0, 0.0), b["cutting_plane"]), ((-6.0, -1.0), b["bar_only"]),
+                                            ((0.0, 4.0), b["bar_only"])], "iso turning insert boring 4", p)
         outline, note = self.fa.tool_outline(boring)
+        self.assertIn("older tool model", note)
+        np.testing.assert_allclose(outline.control_in_shape, (0.0, 0.0), atol=1e-9)
+        self.assertAlmostEqual(outline.nose_radius, 0.4, 6)
+        # neither plane has the nose (only holder there): the parameters, and the note says why
+        only_holder = self._iso_tool(t["bbox"], [((-1.0, 12.0), t["holder"])], "holder only", p)
+        outline, note = self.fa.tool_outline(only_holder)
+        self.assertIn("section at Y 0.01 or -0.01 has no nose of radius 0.4", note)
+        self.assertIn("using Isoshape parameters", note)
+
+    def test_tool_models_from_0_18_1(self):
+        # the rake face is Y 0 with insert and holder on +Y: the section at +0.01, no note
+        import json
+        with open(os.path.join(HERE, "data", "holders", "tools.json")) as f:
+            d = json.load(f)
+        r = d["rake_plane"]
+        iso = self._iso_tool(r["bbox"], [((0.0, 1.0), r["insert"])], "isoshape 0.18.1", r["params"])
+        outline, note = self.fa.tool_outline(iso)
         self.assertEqual(note, "")
         np.testing.assert_allclose(outline.control_in_shape, (0.0, 0.0), atol=1e-9)
         self.assertAlmostEqual(outline.nose_radius, 0.4, 6)
-        # a section without the nose (only holder there) falls back to the parameters, and says so
-        only_holder = tool(t["bbox"], [((-1.0, 12.0), t["holder"])], "holder only")
-        outline, note = self.fa.tool_outline(only_holder)
-        self.assertIn("has no nose of radius 0.4", note)
-        self.assertIn("using Isoshape parameters", note)
+        self.assertEqual(self.fa.cutting_planes(iso.Shape.BoundBox), [0.01])   # nothing under the rake face
+        # with a holder on top of the insert, the insert is still what +0.01 cuts
+        t = d["turning"]
+        held = self._iso_tool((0.0, 0.0, 0.0, 80.0, 13.0, 16.0),
+                              [((0.0, 1.0), t["insert"]), ((1.0, 13.0), t["holder"])],
+                              "iso insert in a holder, 0.18.1", d["params"])
+        outline, note = self.fa.tool_outline(held)
+        self.assertEqual(note, "")
+        self.assertLess(outline.xmax, 10.0)
+        # a 3 mm threading insert of any version spans +0.01 (before 0.17.4: Y -1.5 to 1.5; now 0 to 3)
+        q = lambda v: types.SimpleNamespace(Value=v)  # noqa: E731
+        with open(os.path.join(HERE, "data", "thread", "tool_threading_section.json")) as f:
+            th = json.load(f)["edges"]
+        for ys in ((-1.5, 1.5), (0.0, 3.0)):
+            bb = fakefreecad.BoundBox(0.05, ys[0], -3.0, 11.2, ys[1], 3.0)
+            tool = types.SimpleNamespace(Label="threading", ShapeID="threading", ProfileAngle=q(60.0),
+                                         TipRadius=q(0.05), Width=q(6.0),
+                                         Shape=fakefreecad.Shape([], bb, sections=[(ys, th)]))
+            outline, note = self.fa.tool_outline(tool)
+            self.assertEqual(note, "")
+            self.assertEqual(outline.control_in_shape, (0.0, 0.0))
+            self.assertEqual(tool.Shape.slices, [])
+
+    def _iso_tool(self, bbox, sections, label, p):
+        q = lambda v: types.SimpleNamespace(Value=v)  # noqa: E731
+        return types.SimpleNamespace(Label=label, ShapeID="isoshape",
+                                     Shape=fakefreecad.Shape([], fakefreecad.BoundBox(*bbox), sections=sections),
+                                     TipRadius=q(p["TipRadius"]), EdgeLength=q(p["EdgeLength"]),
+                                     TipAngle=q(p["TipAngle"]), Rotation=q(p["Rotation"]))
 
     def test_side_property_fallback(self):
         op = types.SimpleNamespace(Proxy=object(), Side="Internal")

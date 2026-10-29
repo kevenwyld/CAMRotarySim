@@ -104,21 +104,22 @@ def tool_reference(tool):
     return REF_ORIGIN
 
 
-# the cutting edge lies just under Y = 0 in the shape's frame; mid-thickness
-# would be inside a holder drawn in the same solid
-CUTTING_PLANE_Y = -0.01
+# The cutting section, Placement reset, in order (CAM Lathe Turning CONTRACT.md):
+# +0.01, just inside the rake face (Y = 0) of tool models from 0.18.1 on, insert and
+# holder on +Y; then -0.01 for older models, whose Isoshape insert hangs under Y = 0
+# (made with 0.17.4 to 0.18.0, too: their Y offset is in the Placement, which is reset).
+CUTTING_PLANES_Y = (0.01, -0.01)
 
 
-def cutting_plane(bb):
-    """Y of the section that gives the cutting outline, for a tool shape's bounding box."""
-    if bb.YMin < CUTTING_PLANE_Y < bb.YMax:
-        return CUTTING_PLANE_Y
-    return (bb.YMin + bb.YMax) / 2.0
+def cutting_planes(bb):
+    """The Ys to section a tool shape at, in order (mid-thickness if it spans neither)."""
+    ys = [y for y in CUTTING_PLANES_Y if bb.YMin < y < bb.YMax]
+    return ys or [(bb.YMin + bb.YMax) / 2.0]
 
 
 def tool_outline(tool):
-    """(ToolOutline, note) from the tool solid's XZ section at cutting_plane(), Placement reset;
-    without a usable section (or an Isoshape nose of TipRadius) from the shape parameters."""
+    """(ToolOutline, note) from the tool solid's XZ section at the first of cutting_planes() with
+    edges (and, for an Isoshape, a nose of TipRadius), Placement reset; else from the parameters."""
     tip_r = _value(tool.TipRadius) if hasattr(tool, "TipRadius") else None
     reference = tool_reference(tool)
     note = ""
@@ -127,15 +128,20 @@ def tool_outline(tool):
         try:
             shape = shape.copy()
             shape.Placement = FreeCAD.Placement()
-            y = cutting_plane(shape.BoundBox)
-            wires = shape.slice(Y_AXIS, y)
-            edges = edge_dicts([e for w in wires for e in w.Edges])
-            nose_ok = not (reference == REF_IMAGINARY_TIP and tip_r) or any(
-                e["kind"] == "arc" and abs(e["radius"] - tip_r) <= max(1e-3, 0.01 * tip_r) for e in edges)
-            if edges and nose_ok:
-                return ToolOutline.from_section(edges, tip_r, "tool shape of %s" % tool.Label,
-                                                reference=reference), note
-            note = ("tool shape's section at Y %g has no nose of radius %g" % (y, tip_r) if edges
+            planes = cutting_planes(shape.BoundBox)
+            for k, y in enumerate(planes):
+                wires = shape.slice(Y_AXIS, y)
+                edges = edge_dicts([e for w in wires for e in w.Edges])
+                nose_ok = not (reference == REF_IMAGINARY_TIP and tip_r) or any(
+                    e["kind"] == "arc" and abs(e["radius"] - tip_r) <= max(1e-3, 0.01 * tip_r) for e in edges)
+                if edges and nose_ok:
+                    if k and y == CUTTING_PLANES_Y[1]:
+                        note = ("an older tool model, cutting plane at Y %g (CAM menu > Rebuild Turning Tool "
+                                "Models updates it)" % y)
+                    return ToolOutline.from_section(edges, tip_r, "tool shape of %s" % tool.Label,
+                                                    reference=reference), note
+            note = ("tool shape's section at Y %s has no nose of radius %g"
+                    % (" or ".join("%g" % y for y in planes), tip_r) if edges
                     else "tool shape has no section in the XZ plane")
         except Exception as e:  # fall back below
             note = "tool shape section failed: %s" % e

@@ -36,9 +36,11 @@ The README is the user guide; CONTRACT.md lists what the adapter assumes about C
 
 The outline is a closed polygon in (x, z) relative to the control point, the point
 the path is programmed to. It is taken from the op's tool solid, sectioned in the
-XZ plane just under Y = 0 (the cutting edge's plane; mid-thickness would be inside a
-holder drawn in the same solid). Without a usable section it is built from the shape
-parameters (Isoshape, Threading, Drill).
+XZ plane through the rake face at Y = 0 (mid-thickness would be inside a holder drawn
+in the same solid), Placement reset: at Y +0.01 (tool models from CAM Lathe Turning
+0.18.1, insert on +Y), else at Y -0.01 (older models, Isoshape insert under Y = 0)
+when +0.01 gives no edges or no Isoshape nose of TipRadius. Without a usable section
+it is built from the shape parameters (Isoshape, Threading, Drill).
 
 Control point by shape (CAM Lathe Turning `TurnToolShapes.py`):
 
