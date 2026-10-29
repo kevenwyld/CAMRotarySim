@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """
 Find and measure the threads a simulation cut: major, minor and pitch diameter (the median
-radius over whole pitches) on the stock, compared with the Turn Thread op's ThreadReport.
+radius over whole pitches) on the stock, compared with the Turn Thread op's diameters.
 """
 
 import math
@@ -14,6 +14,7 @@ import numpy as np
 from .motion import THREAD
 
 RANGE = r"([0-9]+(?:\.[0-9]+)?)\s*-\s*([0-9]+(?:\.[0-9]+)?)"
+INCH = re.compile(r'[0-9]"')
 
 
 @dataclass
@@ -76,6 +77,23 @@ def _range(text, label):
     return (float(m.group(1)), float(m.group(2))) if m else None
 
 
+def _pair(meta, lo, hi):
+    a, b = float(meta.get(lo) or 0.0), float(meta.get(hi) or 0.0)
+    return (a, b) if a > 0 and b > 0 else None
+
+
+def expected_diameters(meta, notes):
+    """(pitch, major, minor) (min, max) ranges in mm: the op's Thread*Dia properties, else the
+    ThreadReport text; an inch report (numbers with a ") is not compared."""
+    if "ThreadPitchDiaMin" in meta:
+        return tuple(_pair(meta, "Thread%sDiaMin" % k, "Thread%sDiaMax" % k) for k in ("Pitch", "Major", "Minor"))
+    report = meta.get("ThreadReport", "") or ""
+    if INCH.search(report):
+        notes.append("inch report: not compared")
+        return None, None, None
+    return _range(report, "Pitch diameter"), _range(report, "major diameter to"), _range(report, "minor diameter to")
+
+
 def measure(stock, zone, tool_half_width=0.0, tol=0.01):
     res = ThreadResult(zone)
     p = zone.pitch
@@ -83,13 +101,13 @@ def measure(stock, zone, tool_half_width=0.0, tol=0.01):
         res.notes.append("passes use different pitches (%s): the grooves won't line up"
                          % ", ".join("%g" % k for k in sorted(set(zone.pitches))))
     meta = zone.meta or {}
-    report = meta.get("ThreadReport", "")
-    res.expected_pitch = _range(report, "Pitch diameter")
-    res.expected_major = _range(report, "major diameter to")
-    res.expected_minor = _range(report, "minor diameter to")
+    res.expected_pitch, res.expected_major, res.expected_minor = expected_diameters(meta, res.notes)
     if meta.get("ThreadDiameter") and meta.get("ThreadDepth"):
         sign = 1 if zone.internal else -1
         res.expected_root = float(meta["ThreadDiameter"]) + sign * 2 * float(meta["ThreadDepth"])
+    if meta.get("ThreadRootDia"):
+        res.expected_root = float(meta["ThreadRootDia"])
+    if res.expected_root is not None:
         if abs(2 * zone.deepest - res.expected_root) > 2 * tol:
             res.notes.append("deepest pass reaches diameter %.3f; the op's %s is %.3f"
                              % (2 * zone.deepest, "major" if zone.internal else "root", res.expected_root))

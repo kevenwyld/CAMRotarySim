@@ -21,6 +21,9 @@ from .core.tool import REF_IMAGINARY_TIP, REF_ORIGIN, ToolOutline
 # Thread op properties passed to the thread check (CAM Lathe Turning PathTurnThread)
 THREAD_PROPS = ("Pitch", "ThreadDepth", "ThreadDiameter", "ThreadReport", "ThreadStandard", "ThreadSize",
                 "DrillReport")
+# Structured thread data in mm (0: no data for the class); older ops lack them
+THREAD_DIAMETERS = ("ThreadPitchDiaMin", "ThreadPitchDiaMax", "ThreadMajorDiaMin", "ThreadMajorDiaMax",
+                    "ThreadMinorDiaMin", "ThreadMinorDiaMax", "ThreadRootDia")
 
 Y_AXIS = FreeCAD.Vector(0, 1, 0)
 
@@ -238,9 +241,9 @@ def spindle_sense(op, forward_right_hand=True):
 
 def op_meta(op):
     meta = {}
-    for p in THREAD_PROPS:
-        if hasattr(op, p):
-            v = getattr(op, p)
+    for p in THREAD_PROPS + THREAD_DIAMETERS:
+        v = getattr(op, p, None)
+        if v is not None:
             meta[p] = v if isinstance(v, str) else _value(v)
     tc = PathDressup.toolController(op)
     if tc is not None and hasattr(tc, "SpindleDir"):

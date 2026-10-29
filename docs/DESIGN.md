@@ -99,7 +99,9 @@ and Z and Q within a series. G85 to G89 and cycles in G91 are reported, not simu
   equally wide). If the groove is narrower (or wider) than the ridge even at the crests
   (roots), the pitch line is extrapolated along the straight flanks. Internal threads
   are measured on the bore, where crests and roots swap. Results are compared with the
-  Turn Thread op's ThreadReport ranges and with ThreadDiameter / 2 - ThreadDepth.
+  Turn Thread op's Thread*Dia properties (mm) and ThreadRootDia. Older
+  ops without them fall back to the ThreadReport ranges and ThreadDiameter -/+ 2
+  ThreadDepth; an inch report (UNC/UNF) is then not compared rather than misread.
 
 ## Stock and part (turning)
 

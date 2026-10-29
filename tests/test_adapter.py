@@ -5,6 +5,7 @@ fake Job built from the sample Job fixtures. Checks the adapter's own logic;
 FreeCAD's Part/Path behaviour is only emulated here.
 """
 
+import dataclasses
 import os
 import sys
 import types
@@ -215,6 +216,67 @@ class TestAdapter(unittest.TestCase):
         op = types.SimpleNamespace(Proxy=object(), Side="Internal")
         self.assertTrue(self.fa.is_internal(op))
         self.assertFalse(self.fa.is_internal(types.SimpleNamespace(Proxy=object())))
+
+
+class TestThreadData(unittest.TestCase):
+    """The thread check's expected diameters: Thread*Dia properties, else the metric or inch ThreadReport."""
+
+    INCH_REPORT = ('UNC 1/2-13 external, class 2A\n'
+                   'Turn the major diameter to 0.4876"-0.4985" first: the selected 0.4725" is 0.0151" under\n'
+                   'Pitch diameter 0.4435"-0.4485", cut to 0.4460"\n'
+                   'Root diameter 0.3836", 0.0444" deep from the selected diameter')
+
+    @classmethod
+    def setUpClass(cls):
+        fakefreecad.install()
+        sys.modules.pop("camrotarysim.freecad_adapter", None)
+        import camrotarysim.freecad_adapter as fa
+        from camrotarysim.core import thread_check
+        from camrotarysim.core.simulation import Simulation
+        cls.fa, cls.T = fa, thread_check
+        _doc, job, cls.op, _tc = make_thread_doc(fakefreecad)
+        stock, inputs, _pl, _notes = fa.build_inputs(job, [cls.op], 0.05)
+        sim = Simulation(stock, inputs)
+        sim.run_to_end()
+        cls.stock, cls.zone = stock, cls.T.thread_zones(sim)[0]
+
+    def measure(self, **props):
+        op = types.SimpleNamespace(**dict(vars(self.op), **props))
+        return self.T.measure(self.stock, dataclasses.replace(self.zone, meta=self.fa.op_meta(op)), 3.0)
+
+    def test_properties_present(self):
+        props = dict(ThreadPitchDiaMin=11.2, ThreadPitchDiaMax=11.3, ThreadMajorDiaMin=11.95,
+                     ThreadMajorDiaMax=12.05, ThreadMinorDiaMin=0.0, ThreadMinorDiaMax=0.0,
+                     ThreadRootDia=types.SimpleNamespace(Value=9.5))
+        r = self.measure(ThreadReport=self.INCH_REPORT, **props)  # the properties are mm whatever the report
+        self.assertAlmostEqual(r.pitch_diameter, 11.259, delta=0.01)
+        self.assertEqual(r.expected_pitch, (11.2, 11.3))     # not the report's 10.679-10.829
+        self.assertEqual(r.expected_major, (11.95, 12.05))
+        self.assertIsNone(r.expected_minor)
+        self.assertEqual(r.verdict, "ok")
+        self.assertEqual(r.expected_root, 9.5)
+        self.assertTrue(any("deepest pass reaches diameter 9.744; the op's root is 9.500" in n for n in r.notes))
+        self.assertFalse(any("crests" in n for n in r.notes))
+        # 0 everywhere: the class has no data, so no verdict and no fallback to the report
+        r = self.measure(**{k: 0.0 for k in self.fa.THREAD_DIAMETERS})
+        self.assertEqual((r.expected_pitch, r.verdict), (None, ""))
+        self.assertAlmostEqual(r.expected_root, 9.744, 3)    # ThreadDiameter - 2 ThreadDepth
+
+    def test_properties_absent_metric_report(self):
+        r = self.measure()
+        self.assertNotIn("ThreadPitchDiaMin", self.fa.op_meta(self.op))
+        self.assertEqual(r.expected_pitch, (10.679, 10.829))
+        self.assertEqual(r.expected_major, (11.701, 11.966))
+        self.assertEqual(r.verdict, "shallow")
+        self.assertNotIn("inch report: not compared", r.notes)
+
+    def test_properties_absent_inch_report(self):
+        r = self.measure(ThreadReport=self.INCH_REPORT, ThreadStandard="UNC")
+        self.assertIn("inch report: not compared", r.notes)
+        self.assertEqual((r.expected_pitch, r.expected_major, r.expected_minor), (None, None, None))
+        self.assertEqual(r.verdict, "")
+        self.assertIsNotNone(r.pitch_diameter)               # still measured, just not judged
+        self.assertTrue(any("inch report" in line for line in self.T.format_thread(r)))
 
 
 if __name__ == "__main__":
